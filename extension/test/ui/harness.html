@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<script type="module">
+  import { Coordinator } from '../../engine/coordinator.js';
+  import { normalizeChrome, executeChrome } from '../../chrome-adapter.js';
+  import { FakeChrome, FakeSafari } from '../fakes.js';
+  const safari = new FakeSafari(); let n = 0;
+  safari.uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+  const B = { 'cr-chrome': new FakeChrome(), 'cr-edge': new FakeChrome() };
+  const names = { 'cr-chrome': 'Chrome', 'cr-edge': 'Edge' };
+  const eps = [{ id: 'safari', kind: 'safari', browser: 'safari', name: 'Safari', online: true,
+    read: async () => ({ tree: safari.tree(), fingerprint: JSON.stringify(safari.tree()) }),
+    apply: async (ops) => { safari.apply(ops); return { applied: ops.length, backup: '~/Library/Application Support/BookmarkSync/Backups/Bookmarks-20260923-101500-3fa2c1d0.plist' }; } }];
+  for (const [id, f] of Object.entries(B)) eps.push({ id, kind: 'chromium', browser: id.slice(3), name: names[id], online: true,
+    read: async () => { const c = normalizeChrome((await f.getTree())[0]); return { tree: c.tree, fingerprint: JSON.stringify(c.tree) }; },
+    apply: async (ops) => { const { rootIds } = normalizeChrome((await f.getTree())[0]); const r = await executeChrome(ops, f, rootIds); return { applied: r.done, created: r.created }; } });
+  let state = null, rev = 0, settings = null; const mem = new Map();
+  const coord = new Coordinator({ store: { load: async () => ({ state: structuredClone(state), revision: rev }), save: async (s) => { state = structuredClone(s); return ++rev; } },
+    settings: { load: async () => settings, save: async (s) => { settings = s; } }, endpoints: { list: async () => eps }, kv: { get: async (k) => mem.get(k), set: async (k, v) => mem.set(k, v) } });
+  const work = safari.add('root:bar', '工作');
+  safari.add(work, '汶川县大数据中心', 'https://data.example.gov.cn/');
+  safari.add(work, '项目周报', 'https://docs.example.com/weekly');
+  safari.add(work, '接口文档', 'https://api.example.com/docs');
+  safari.add('root:bar', 'GitHub', 'https://github.com/');
+  for (let i = 1; i <= 6; i++) safari.add('root:bar', `常用 ${i}`, `https://t${i}.test/`);
+  { const s = await coord.scan(); await coord.run(s.scanId, {}); }
+  const cBar = (id) => B[id].nodes.get('1').children.map((x) => B[id].nodes.get(x));
+  const t = safari.tree().roots['root:bar'].children;
+  safari.find(t[1].id).title = 'GitHub · davie-01';
+  await B['cr-chrome'].update(cBar('cr-chrome')[0].children[1], { title: '项目周报（Chrome 改）' });
+  await B['cr-edge'].update(cBar('cr-edge')[0].children[1], { title: '项目周报（Edge 改）' });
+  await B['cr-chrome'].removeTree(cBar('cr-chrome')[0].children[2]);
+  const f = B['cr-edge'].add('2', 'Edge 新建文件夹'); B['cr-edge'].add(f, 'MDN', 'https://developer.mozilla.org/'); B['cr-edge'].add(f, 'Can I use', 'https://caniuse.com/');
+  const eb = B['cr-edge'].nodes.get('1'); eb.children.reverse();
+  const handlers = {
+    status: async () => ({ endpointId: 'cr-chrome', agent: { version: '0.2.0', engine: true, safariAccess: 'ok', safariRunning: true, endpoints: eps.map(({ id, kind, browser, name, online }) => ({ id, kind, browser, name, online })) }, settings: await coord.settings(), pending: mem.get('pending') }),
+    scan: () => coord.scan(), preview: (m) => coord.preview(m.scanId, m.choices), run: (m) => coord.run(m.scanId, m.choices),
+    settings: () => coord.settings(), saveSettings: (m) => coord.saveSettings(m.patch), history: async () => mem.get('history') || [],
+    storage: async () => ({ backups: { count: 14, bytes: 4_300_000, oldest: Date.now() - 86400000 * 12 }, logs: { count: 3, bytes: 220_000, oldest: Date.now() - 86400000 * 30 }, state: { bytes: 114_245 } }),
+    clean: async (m) => ({ dryRun: m.dryRun, backups: { removed: 4, bytes: 1_200_000, kept: 10 }, logs: { removed: 1, truncated: 1, bytes: 180_000 } }),
+    clearHistory: async () => { mem.set('history', []); return { ok: true }; },
+  };
+  globalThis.BookmarkSyncBackend = {
+    async call(type, p) { try { return { ok: true, result: await handlers[type](p) }; } catch (e) { return { ok: false, error: { message: e.message, code: e.code } }; } },
+    onEvent() {},
+  };
+  const html = await (await fetch('../../ui/index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  document.head.innerHTML = '<link rel="stylesheet" href="../../ui/ui.css">';
+  document.body.innerHTML = doc.body.innerHTML.replace('../icons/32.png', '../../icons/32.png');
+  await import('../../ui/ui.js');
+  window.__ready = true;
+</script>

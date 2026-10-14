@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BookmarkSync · 书签同步</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="../icons/32.png" alt="" width="24" height="24">
+      <h1>书签同步</h1>
+      <span class="sub" id="sub">Safari ↔ Chromium 浏览器</span>
+    </div>
+    <div id="chips" class="chips" aria-live="polite"></div>
+    <div class="top-actions">
+      <button id="btn-scan" class="primary" type="button">扫描差异</button>
+      <button id="btn-history" class="ghost" type="button">历史</button>
+      <button id="btn-settings" class="ghost" type="button">设置</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="setup" class="card setup" hidden></section>
+
+    <section id="scan-meta-row" class="meta-row" hidden><span id="scan-meta" class="muted"></span></section>
+
+    <section id="warnings"></section>
+
+    <section id="filters" class="filters" hidden>
+      <div class="chips-filter" id="type-filter">
+        <button type="button" data-type="all" class="on">全部 <b data-count="all"></b></button>
+        <button type="button" data-type="create">新增 <b data-count="create"></b></button>
+        <button type="button" data-type="modify">修改 <b data-count="modify"></b></button>
+        <button type="button" data-type="delete">删除 <b data-count="delete"></b></button>
+        <button type="button" data-type="conflict">冲突 <b data-count="conflict"></b></button>
+        <button type="button" data-type="order">排序 <b data-count="order"></b></button>
+      </div>
+      <input id="search" type="search" placeholder="搜索标题 / 网址 / 路径">
+      <div class="bulk">
+        <button type="button" class="ghost small" data-bulk="default">恢复默认</button>
+        <button type="button" class="ghost small" data-bulk="ignore">全部忽略</button>
+      </div>
+    </section>
+
+    <section id="empty" class="card empty" hidden></section>
+    <section id="list" class="list"></section>
+    <section id="result" class="card result" hidden></section>
+
+    <section id="history-view" class="history-view" hidden>
+      <div class="history-head">
+        <button id="btn-history-back" class="ghost" type="button">← 返回</button>
+        <h2>同步历史</h2>
+        <div class="chips-filter" id="history-filter">
+          <button type="button" data-hist="all" class="on">全部</button>
+          <button type="button" data-hist="manual">手动</button>
+          <button type="button" data-hist="failed">失败</button>
+        </div>
+      </div>
+      <div id="history"></div>
+      <p class="muted small">只保留最近 100 次有写入或出错的同步。历史与日志、备份分开存放，清理日志不会删掉这里的记录。</p>
+    </section>
+  </main>
+
+  <footer id="bar" class="bar" hidden>
+    <div id="plan" class="plan"></div>
+    <button id="btn-run" class="primary" type="button">执行同步</button>
+  </footer>
+
+  <dialog id="dlg-settings">
+    <form method="dialog" class="dlg wide">
+      <h2>设置</h2>
+      <div id="settings-body"></div>
+      <div class="row tools">
+        <button type="button" class="ghost" id="btn-backups">打开备份文件夹</button>
+        <button type="button" class="ghost" id="btn-logs">打开日志</button>
+        <button type="button" class="ghost" id="btn-restore-order">从书签备份恢复本浏览器顺序…</button>
+        <input type="file" id="file-restore" accept=".html,.htm,text/html" hidden>
+        <button type="button" class="danger ghost" id="btn-reset">重置同步状态…</button>
+      </div>
+      <p class="muted small">Safari 每次写入前都会在 ~/Library/Application Support/BookmarkSync/Backups 留一份完整备份。</p>
+      <menu><button value="cancel" class="ghost">关闭</button><button value="ok" class="primary" id="btn-save-settings">保存</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-confirm">
+    <form method="dialog" class="dlg">
+      <h2 id="confirm-title">确认</h2>
+      <div id="confirm-body"></div>
+      <menu><button value="cancel" class="ghost">取消</button><button value="ok" class="danger" id="confirm-ok">确定</button></menu>
+    </form>
+  </dialog>
+
+  <script type="module" src="ui.js"></script>
+</body>
+</html>

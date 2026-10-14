@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "BookmarkSync · Safari ↔ Chrome",
+  "short_name": "BookmarkSync",
+  "version": "0.2.0",
+  "description": "在本机同步 Safari 与 Chrome 书签：差异预览、逐项选择、冲突处理、单向/双向。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvAMhV3UlgIRU7EJPy78pwkNNwDnxURDzDTavZx3jZQEDzZ6X11lxC+eUaHwJusDrsSlf+zr4NmhkgQPyw637TCViWvfxDOVbObnXSw92m2JtK+Ixk5b5P45BSiRc347uVelz8XqptlW9xMo2Xoc1Fx62wIYNYn/qQsYwxdgQS14674wyyFHmLWHqILOhmaA7xjdzWSxv1vYt9zxrNnDATF3pQS2mhqcX6bEx7gqnACFtmyrfKKmhwk5cKt3rvQnvqwvs2uwa26whMIIe1GbPwZeSe9d1+jE1bxEWvEd66997ADOW+J2WHp4HaCUZVwICyLcoLrny9PhB7rtXJQxZXQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["bookmarks", "nativeMessaging", "storage", "alarms"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "书签同步", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

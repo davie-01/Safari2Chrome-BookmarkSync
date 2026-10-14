@@ -1,0 +1,12 @@
+{
+  "name": "bookmarksync-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bundle": "node build-engine.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2"
+  }
+}

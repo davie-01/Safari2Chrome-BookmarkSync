@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Engine and UI tests
+        run: |
+          cd extension
+          node --test --test-reporter=tap test/*.test.js
+      - name: Swift tests
+        run: |
+          cd native
+          swift test
+      - name: Engine bundle is up to date
+        run: |
+          cd extension
+          npm install --no-save esbuild@0.24.2
+          node build-engine.mjs
+          git diff --exit-code -- ../native/Resources/engine.js \
+            || { echo "::error::native/Resources/engine.js is stale — run node extension/build-engine.mjs"; exit 1; }
+
+  package:
+    needs: test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app, dmg and extension zip
+        run: scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bookmarksync-dist
+          path: dist/

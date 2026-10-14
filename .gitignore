@@ -1,0 +1,12 @@
+.DS_Store
+build/
+dist/
+native/.build/
+native/.swiftpm/
+node_modules/
+keys/extension-key.pem
+*.log
+.runlogs/
+run.command
+*.tgz
+scripts/probe/.probe-state/

@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests
+        run: |
+          cd extension && node --test --test-reporter=tap test/*.test.js
+          cd ../native && swift test
+      - name: Package
+        run: scripts/package.sh
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          body: |
+            The app is ad-hoc signed and **not notarised**, so macOS blocks the first launch.
+            Let it through in **System Settings → Privacy & Security → Open Anyway**, or run
+            `xattr -dr com.apple.quarantine /Applications/BookmarkSync.app`.
+            (Before macOS 15, right-click → Open worked; Sequoia removed that shortcut.)
+
+            Then give BookmarkSync **Full Disk Access** (System Settings → Privacy & Security) so it can
+            read Safari's bookmarks, and load `bookmarksync-extension-*.zip` as an unpacked extension
+            in each browser (chrome://extensions → Developer mode → Load unpacked).
