@@ -192,4 +192,6 @@ scripts/build-app.sh                         # 打包并安装
 
 ## 许可
 
-MIT，见 [LICENSE](LICENSE)。
+GNU General Public License v3.0，见 [LICENSE](LICENSE)。
+
+简单说：可以自由使用、修改、分发；但分发修改版（含二进制）时必须同样以 GPLv3 开源并提供源码。如果只是自己改着用，不对外分发，没有任何额外义务。

@@ -173,4 +173,6 @@ The engine is plain JavaScript (`extension/engine/`), running in JavaScriptCore 
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).
+
+In short: use, modify and redistribute freely, but a modified version you distribute (binaries included) has to be GPLv3 too, with its source available. Changes you keep to yourself carry no obligation.
