@@ -2,7 +2,7 @@
 
 在一台 Mac 上同步 **Safari** 与 **Chrome / Edge / Brave / Vivaldi / Arc** 等 Chromium 浏览器的书签。本机运行，不上传任何数据，不需要账号。
 
-[English](README.en.md) · [架构说明](docs/ARCHITECTURE.md)
+[English](README.en.md) · [架构说明](docs/ARCHITECTURE.md) · [隐私政策](PRIVACY.md)
 
 ---
 

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "BookmarkSync · Safari ↔ Chrome",
+  "name": "BookmarkSync — 书签本机同步",
   "short_name": "BookmarkSync",
   "version": "0.2.0",
-  "description": "在本机同步 Safari 与 Chrome 书签：差异预览、逐项选择、冲突处理、单向/双向。",
+  "description": "在本机同步 Safari 与 Google Chrome™ 的书签：差异预览、逐项选择、冲突处理、双向或单向。不联网，不上传。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvAMhV3UlgIRU7EJPy78pwkNNwDnxURDzDTavZx3jZQEDzZ6X11lxC+eUaHwJusDrsSlf+zr4NmhkgQPyw637TCViWvfxDOVbObnXSw92m2JtK+Ixk5b5P45BSiRc347uVelz8XqptlW9xMo2Xoc1Fx62wIYNYn/qQsYwxdgQS14674wyyFHmLWHqILOhmaA7xjdzWSxv1vYt9zxrNnDATF3pQS2mhqcX6bEx7gqnACFtmyrfKKmhwk5cKt3rvQnvqwvs2uwa26whMIIe1GbPwZeSe9d1+jE1bxEWvEd66997ADOW+J2WHp4HaCUZVwICyLcoLrny9PhB7rtXJQxZXQIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": ["bookmarks", "nativeMessaging", "storage", "alarms"],
