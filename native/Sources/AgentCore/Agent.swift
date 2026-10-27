@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SafariBookmarks
 
 /// Long-running agent. Owns Safari file access (Full Disk Access is granted to
@@ -93,6 +94,14 @@ public final class Agent {
         startPeriodic()
         if CommandLine.arguments.contains("--exit-with-parent") { startParentWatch() }
         Installer.refreshNativeHostManifests()
+        Thread.detachNewThread { [self] in acceptLoop(fd) }
+        // The main thread runs the run loop: NSWorkspace delivers Safari launch/quit there.
+        _ = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in } // keeps run() from returning
+        RunLoop.main.run()
+        fatalError("main run loop exited")
+    }
+
+    private func acceptLoop(_ fd: Int32) -> Never {
         while true {
             let c = accept(fd, nil, nil)
             if c < 0 { if errno == EINTR { continue }; Log.error("accept errno=\(errno)"); sleep(1); continue }
@@ -624,12 +633,39 @@ public final class Agent {
 
     // MARK: Safari watcher
 
+    /// Safari is watched by events: the bookmarks file (FileWatcher) and Safari launching or
+    /// quitting (NSWorkspace). Both only prompt `tick`, which compares for itself; the slow
+    /// poll covers whatever the events miss.
+    static let watchFallback: TimeInterval = 30
+    private var fileWatcher: FileWatcher?
+    private var tickQueued = false
+
     func startWatcher() {
+        let w = FileWatcher(url: safari.url, queue: work) { [weak self] in self?.tickSoon() }
+        if !w.start() { Log.warn("cannot watch \(safari.url.deletingLastPathComponent().path); polling every \(Int(Agent.watchFallback))s") }
+        fileWatcher = w
+        let nc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            nc.addObserver(forName: name, object: nil, queue: nil) { [weak self] n in
+                let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                if app?.bundleIdentifier == "com.apple.Safari" { self?.work.async { self?.tick() } }
+            }
+        }
         let t = DispatchSource.makeTimerSource(queue: work)
-        t.schedule(deadline: .now() + 1, repeating: 2.0, leeway: .milliseconds(500))
+        t.schedule(deadline: .now() + 1, repeating: Agent.watchFallback, leeway: .seconds(5))
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t
+    }
+
+    /// A save is several file events in a row; look once they settle (on `work`).
+    func tickSoon() {
+        guard !tickQueued else { return }
+        tickQueued = true
+        work.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.tickQueued = false
+            self?.tick()
+        }
     }
 
     func tick() {
