@@ -61,6 +61,7 @@ struct RootApp: App {
 /// Brings the single window back (⌘Q only hides it) and optionally switches page.
 @MainActor func showMainWindow(_ tab: AppTab? = nil) {
     if let tab = tab { AgentLink.shared.tab = tab }
+    AgentLink.shared.uiVisible = true
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
     if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.title == "BookmarkSync" }) {
@@ -97,6 +98,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { self.updateQuitTitle() }
         }
+        // The main window closed: drop the web UI; back as soon as it is key again.
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { n in
+            MainActor.assumeIsolated { if AppDelegate.isMainWindow(n.object) { AgentLink.shared.uiVisible = false } }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { n in
+            MainActor.assumeIsolated { if AppDelegate.isMainWindow(n.object) { AgentLink.shared.uiVisible = true } }
+        }
+    }
+
+    static func isMainWindow(_ object: Any?) -> Bool {
+        guard let w = object as? NSWindow else { return false }
+        return w.canBecomeMain && w.title == "BookmarkSync"
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -104,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !AppDelegate.quitting, MenuBarPref.enabled else { return .terminateNow }
         DispatchQueue.main.async {
             for w in NSApp.windows where w.isVisible && w.canBecomeMain { w.orderOut(nil) }
+            AgentLink.shared.uiVisible = false // tears down the web view (memory, background refreshes)
             NSApp.setActivationPolicy(.accessory) // no Dock icon while it lives in the menu bar
         }
         return .terminateCancel

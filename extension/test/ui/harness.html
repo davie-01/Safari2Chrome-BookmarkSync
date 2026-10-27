@@ -23,7 +23,11 @@
   safari.add(work, '接口文档', 'https://api.example.com/docs');
   safari.add('root:bar', 'GitHub', 'https://github.com/');
   for (let i = 1; i <= 6; i++) safari.add('root:bar', `常用 ${i}`, `https://t${i}.test/`);
+  // ?many=N: N extra pending bookmarks (list paging) and untitled synced ones (order view)
+  const many = +new URLSearchParams(location.search).get('many') || 0;
+  if (many) for (let i = 0; i < 3; i++) safari.add('root:bar', '', `https://untitled${i}.test/`);
   { const s = await coord.scan(); await coord.run(s.scanId, {}); }
+  for (let i = 0; i < many; i++) safari.add(work, `批量 ${i}`, `https://bulk${i}.test/`);
   const cBar = (id) => B[id].nodes.get('1').children.map((x) => B[id].nodes.get(x));
   const t = safari.tree().roots['root:bar'].children;
   safari.find(t[1].id).title = 'GitHub · davie-01';
@@ -34,7 +38,7 @@
   const eb = B['cr-edge'].nodes.get('1'); eb.children.reverse();
   const handlers = {
     status: async () => ({ endpointId: 'cr-chrome', agent: { version: '0.2.0', engine: true, safariAccess: 'ok', safariRunning: true, endpoints: eps.map(({ id, kind, browser, name, online }) => ({ id, kind, browser, name, online })) }, settings: await coord.settings(), pending: mem.get('pending') }),
-    scan: () => coord.scan(), preview: (m) => coord.preview(m.scanId, m.choices), run: (m) => coord.run(m.scanId, m.choices),
+    scan: () => coord.scan(), preview: (m) => coord.preview(m.scanId, m.choices), run: (m) => coord.run(m.scanId, m.choices, { rescan: m.rescan }),
     settings: () => coord.settings(), saveSettings: (m) => coord.saveSettings(m.patch), history: async () => mem.get('history') || [],
     storage: async () => ({ backups: { count: 14, bytes: 4_300_000, oldest: Date.now() - 86400000 * 12 }, logs: { count: 3, bytes: 220_000, oldest: Date.now() - 86400000 * 30 }, state: { bytes: 114_245 } }),
     clean: async (m) => ({ dryRun: m.dryRun, backups: { removed: 4, bytes: 1_200_000, kept: 10 }, logs: { removed: 1, truncated: 1, bytes: 180_000 } }),

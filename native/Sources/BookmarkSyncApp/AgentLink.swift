@@ -18,6 +18,9 @@ final class AgentLink: ObservableObject {
     @Published private(set) var lastMessage: String?
     @Published private(set) var resident = Installer.residentEnabled
     @Published var tab: AppTab = .sync
+    /// False while the window is put away (⌘Q with the menu bar icon, or closed): the
+    /// embedded web UI is then torn down instead of living on in the background.
+    @Published var uiVisible = true
     @Published private(set) var lastRunAt: Date?
     @Published private(set) var storage: StorageStats?
     /// Bumped when the interface language changes, so the embedded web UI reloads.
@@ -29,7 +32,12 @@ final class AgentLink: ObservableObject {
     /// Writes only; the read loop gets a thread of its own so it cannot block them.
     private let io = DispatchQueue(label: "bmsync.app.link.write")
     private var reconnectTimer: Timer?
-    private var eventSinks: [([String: Any]) -> Void] = []
+    private struct EventSink {
+        weak var owner: AnyObject?
+        let fn: ([String: Any]) -> Void
+    }
+    private var eventSinks: [EventSink] = []
+    private var refreshQueued = false
 
     var endpoints: [EndpointInfo] { status?.endpoints ?? [] }
 
@@ -68,7 +76,7 @@ final class AgentLink: ObservableObject {
         if fd >= 0 { close(fd); fd = -1 }
         connected = false
         status = nil
-        for sink in eventSinks { sink(["event": "agent.disconnected"]) }
+        emit(["event": "agent.disconnected"])
         for (_, cb) in pendingCalls { cb(.failure(AgentError("disconnected", t("与后台服务的连接断开")))) }
         pendingCalls = [:]
     }
@@ -83,7 +91,7 @@ final class AgentLink: ObservableObject {
             return
         }
         guard let ev = msg["event"] as? String else { return }
-        for sink in eventSinks { sink(msg) }
+        emit(msg)
         switch ev {
         case "endpoints.changed", "autoRun", "settings.changed": refresh()
         case "pending": pending = decode(msg["pending"]) ?? pending
@@ -127,7 +135,16 @@ final class AgentLink: ObservableObject {
     }
 
     /// Anything that wants raw agent events (the embedded web UI does).
-    func addEventSink(_ sink: @escaping ([String: Any]) -> Void) { eventSinks.append(sink) }
+    /// Sinks go away with their owner (a web view torn down and built again).
+    func addEventSink(owner: AnyObject, _ sink: @escaping ([String: Any]) -> Void) {
+        eventSinks.removeAll { $0.owner == nil }
+        eventSinks.append(EventSink(owner: owner, fn: sink))
+    }
+
+    private func emit(_ event: [String: Any]) {
+        eventSinks.removeAll { $0.owner == nil }
+        for sink in eventSinks { sink.fn(event) }
+    }
 
     func decode<T: Decodable>(_ value: Any?) -> T? {
         guard let v = value else { return nil }
@@ -136,7 +153,19 @@ final class AgentLink: ObservableObject {
 
     // MARK: state
 
+    /// Coalesces bursts (an agent event plus the web page's own status load) into one round.
     func refresh() {
+        guard !refreshQueued else { return }
+        refreshQueued = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self = self else { return }
+            self.refreshQueued = false
+            self.refreshNow()
+        }
+    }
+
+    private func refreshNow() {
         send("hello") { [weak self] r in
             Task { @MainActor in
                 guard let self = self else { return }

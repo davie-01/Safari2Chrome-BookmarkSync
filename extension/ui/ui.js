@@ -23,7 +23,11 @@ const ui = {
   choices: {},
   filter: 'all',
   query: '',
+  limit: 0, // decision rows rendered so far (see PAGE)
 };
+
+/** Rows rendered at a time: thousands of rows (first sync, mass import) make the page sluggish. */
+const PAGE = 300;
 
 /** Paths come from the engine as "书签栏 / 工作"; only the root segment is a UI label. */
 function uiPath(p) {
@@ -225,6 +229,7 @@ function renderScan() {
   empty.hidden = items.length !== 0;
   if (!items.length) empty.textContent = writes ? t('没有需要你决定的项目；还有 {n} 个已确定的改动要写入各端，点「执行同步」即可。', { n: writes }) : t('所有浏览器已经一致，没有需要同步的内容。');
 
+  ui.limit = PAGE;
   renderList();
   renderPlan(sc.preview);
 }
@@ -240,7 +245,14 @@ function renderList() {
     if (!groups.has(path)) groups.set(path, { path, items: [] });
     groups.get(path).items.push(it);
   }
+  // Groups (and their bulk buttons) cover every match; only the first ui.limit rows are built.
+  let room = ui.limit || PAGE;
+  let left = 0;
   for (const g of groups.values()) {
+    if (room <= 0) { left += g.items.length; continue; }
+    const rows = g.items.slice(0, room);
+    room -= rows.length;
+    left += g.items.length - rows.length;
     list.append(h('section', { class: 'group' },
       h('header', {},
         h('span', { class: 'path', title: g.path }, g.path),
@@ -248,9 +260,23 @@ function renderList() {
         h('button', { type: 'button', class: 'ghost small', onclick: () => bulk(g.items, 'default') }, t('默认')),
         h('button', { type: 'button', class: 'ghost small', onclick: () => bulk(g.items, 'ignore') }, t('忽略本组')),
       ),
-      g.items.map(renderItem)));
+      rows.map(renderItem)));
+  }
+  if (left) {
+    list.append(h('button', { type: 'button', class: 'ghost more', onclick: () => { ui.limit = (ui.limit || PAGE) + PAGE; renderList(); } },
+      t('显示更多（还有 {n} 项）', { n: left })));
   }
   if (!groups.size && ui.scan.items.length) list.append(h('div', { class: 'card empty' }, t('没有符合筛选条件的项目')));
+}
+
+/** <details> whose body is only built the first time it is opened. */
+function lazyDetails(attrs, summary, build) {
+  const d = h('details', attrs, h('summary', {}, summary));
+  let built = false;
+  const fill = () => { if (!built && d.open) { built = true; d.append(build()); } };
+  d.addEventListener('toggle', fill);
+  fill();
+  return d;
 }
 
 function tagFor(it) {
@@ -310,13 +336,12 @@ function fieldVal(x, f) {
 function renderOrder(it) {
   const cell = (side, label) => h('div', { class: 'order-col' },
     h('span', { class: 'tag' }, label),
-    h('ol', {}, (it[side]?.order || []).map((t, i) => {
-      const moved = it[side === 's' ? 'c' : 's']?.order?.[i] !== t;
-      return h('li', { class: moved ? 'moved' : '' }, t || t('(无标题)'));
+    h('ol', {}, (it[side]?.order || []).map((title, i) => {
+      const moved = it[side === 's' ? 'c' : 's']?.order?.[i] !== title;
+      return h('li', { class: moved ? 'moved' : '' }, title || t('(无标题)'));
     })));
-  return h('details', { class: 'subtree', open: it.count <= 15 ? true : null },
-    h('summary', {}, t('对比顺序（标色为位置不同）')),
-    h('div', { class: 'order-cmp' }, cell('s', OTHERS), cell('c', nameC(it))));
+  return lazyDetails({ class: 'subtree', open: it.count <= 15 ? true : null }, t('对比顺序（标色为位置不同）'),
+    () => h('div', { class: 'order-cmp' }, cell('s', OTHERS), cell('c', nameC(it))));
 }
 
 function renderChanges(it) {
@@ -346,9 +371,8 @@ function renderChanges(it) {
 
 function renderSubtree(it) {
   if (!it.subtree || !it.subtree.length) return null;
-  return h('details', { class: 'subtree' },
-    h('summary', {}, t('查看文件夹内容（{n}）', { n: it.count - 1 })),
-    h('ul', {}, it.subtree.map((l) => l.more
+  return lazyDetails({ class: 'subtree' }, t('查看文件夹内容（{n}）', { n: it.count - 1 }),
+    () => h('ul', {}, it.subtree.map((l) => l.more
       ? h('li', { class: 'muted' }, t('… 仅显示前 200 项'))
       : h('li', { style: `padding-left:${(l.depth - 1) * 16}px`, title: l.url || '' },
         l.kind === 'folder' ? '📁 ' : '', l.title || t('(无标题)'), l.url ? h('span', { class: 'muted' }, `  ${l.url}`) : null))));
@@ -782,10 +806,15 @@ for (const b of document.querySelectorAll('#type-filter button')) {
   b.addEventListener('click', () => {
     ui.filter = b.dataset.type;
     for (const x of document.querySelectorAll('#type-filter button')) x.classList.toggle('on', x === b);
+    ui.limit = PAGE;
     renderList();
   });
 }
-$('#search').addEventListener('input', (e) => { ui.query = e.target.value.trim(); renderList(); });
+let searchTimer = null;
+$('#search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { ui.query = e.target.value.trim(); ui.limit = PAGE; if (ui.scan) renderList(); }, 200);
+});
 for (const b of document.querySelectorAll('[data-bulk]')) {
   b.addEventListener('click', () => bulk(ui.scan?.items || [], b.dataset.bulk));
 }

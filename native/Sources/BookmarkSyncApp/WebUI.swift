@@ -78,7 +78,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     init(link: AgentLink) {
         self.link = link
         super.init()
-        link.addEventSink { [weak self] ev in self?.push(ev) }
+        link.addEventSink(owner: self) { [weak self] ev in self?.push(ev) }
     }
 
     /// extension/ui asks for `BookmarkSyncBackend`; give it one backed by this bridge.
@@ -158,7 +158,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             catch let e as AgentError { out["agentError"] = ["code": e.code, "message": e.message]; return out }
             out["settings"] = (try? await link.engineCall("settings")) ?? [:]
             if let p = try? await link.engineCall("pending") { out["pending"] = p }
-            link.refresh()
             return out
         case "storage":
             return try await link.call("storage.stats")

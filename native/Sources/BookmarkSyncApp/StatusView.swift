@@ -143,7 +143,9 @@ struct SyncPage: View {
 
     var body: some View {
         Group {
-            if WebBridge.resourceRoot != nil {
+            if !link.uiVisible {
+                Color.clear // put away: no web view kept alive in the background
+            } else if WebBridge.resourceRoot != nil {
                 SyncWebView(link: link)
             } else {
                 VStack(spacing: 8) {

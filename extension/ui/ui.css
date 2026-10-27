@@ -54,6 +54,7 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 button.ghost { background: transparent; }
+button.more { display: block; margin: 12px auto; }
 button.ghost.danger { color: var(--danger); background: transparent; }
 button.small { padding: 3px 8px; font-size: 12px; }
 .muted { color: var(--muted); }

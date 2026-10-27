@@ -354,5 +354,6 @@
  "（本浏览器）": " (this browser)",
  "，": ", ",
  "：新加入的浏览器里，和其他端相同的书签（同一文件夹下标题与网址一致）已自动配对；其余会合并过来，不会删除任何东西。": ": in a newly added browser, bookmarks that match another endpoint (same title and URL in the same folder) are paired automatically; the rest are merged in, and nothing is deleted.",
- "；": "; "
+ "；": "; ",
+ "显示更多（还有 {n} 项）": "Show more ({n} left)"
 }
