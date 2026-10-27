@@ -214,16 +214,20 @@ public final class Agent {
         rpcSeq += 1
         let id = rpcSeq
         var done = false
+        // weak: an answered RPC must not keep the connection around until the deadline
+        let expire = DispatchWorkItem { [weak conn] in
+            guard let conn = conn else { return }
+            conn.lock.lock(); let cb = conn.pending.removeValue(forKey: id); conn.lock.unlock()
+            cb?(.failure(AgentError("timeout", "browser did not answer \(method)")))
+        }
         conn.pending[id] = { r in
+            expire.cancel()
             conn.lock.lock(); let first = !done; done = true; conn.lock.unlock()
             if first { reply(r) }
         }
         conn.lock.unlock()
         send(conn, ["rpc": id, "method": method, "params": params ?? NSNull()])
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-            conn.lock.lock(); let cb = conn.pending.removeValue(forKey: id); conn.lock.unlock()
-            cb?(.failure(AgentError("timeout", "browser did not answer \(method)")))
-        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: expire)
     }
 
     // MARK: events from browsers

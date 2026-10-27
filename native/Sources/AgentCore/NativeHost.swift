@@ -134,23 +134,28 @@ public final class FrameWriter {
         _ = writeAll(fd, frame)
     }
 
+    /// Sends each chunk as soon as it is encoded: only one chunk is held besides the payload.
     public func sendChunked(_ payload: Data) {
-        for f in FrameWriter.frames(for: payload) { send(f) }
+        FrameWriter.forEachFrame(of: payload) { send($0) }
     }
 
     /// Splits a message that would exceed Chrome's 1 MB limit into base64 chunks.
     public static func frames(for payload: Data, limit: Int = NativeHost.maxFrame - 1024, chunk: Int = NativeHost.chunkPayload) -> [Data] {
-        if payload.count <= limit { return [payload] }
+        var out: [Data] = []
+        forEachFrame(of: payload, limit: limit, chunk: chunk) { out.append($0) }
+        return out
+    }
+
+    static func forEachFrame(of payload: Data, limit: Int = NativeHost.maxFrame - 1024, chunk: Int = NativeHost.chunkPayload, _ body: (Data) -> Void) {
+        if payload.count <= limit { body(payload); return }
         let cid = UUID().uuidString
         let total = (payload.count + chunk - 1) / chunk
-        var out: [Data] = []
         for seq in 0..<total {
-            let start = seq * chunk
-            let end = min(payload.count, start + chunk)
-            let b64 = payload.subdata(in: start..<end).base64EncodedString()
+            let start = payload.startIndex + seq * chunk
+            let end = min(payload.endIndex, start + chunk)
+            let b64 = payload[start..<end].base64EncodedString()
             let obj: [String: Any] = ["chunk": ["cid": cid, "seq": seq, "total": total, "b64": b64]]
-            if let d = try? JSON.data(obj) { out.append(d) }
+            if let d = try? JSON.data(obj) { body(d) }
         }
-        return out
     }
 }

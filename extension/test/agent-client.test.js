@@ -38,3 +38,19 @@ test('agent client answers agent RPCs', async () => {
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(sent, [{ rpcReply: 1, ok: true, result: { echo: { a: 1 } } }, { rpcReply: 2, ok: false, error: { code: 'x', message: 'bad' } }]);
 });
+
+test('agent client drops chunks of a message that never completes', () => {
+  const listeners = { msg: [], disc: [] };
+  const port = { onMessage: { addListener: (f) => listeners.msg.push(f) }, onDisconnect: { addListener: (f) => listeners.disc.push(f) }, postMessage() {} };
+  const client = new AgentClient({ connectNative: () => port });
+  client.connect();
+  const send = (cid) => listeners.msg.forEach((f) => f({ chunk: { cid, seq: 0, total: 2, b64: Buffer.from('{"a":').toString('base64') } }));
+  const realNow = Date.now;
+  try {
+    send('stale');
+    assert.equal(client.chunks.size, 1);
+    Date.now = () => realNow() + 3 * 60 * 1000;
+    send('fresh');
+    assert.deepEqual([...client.chunks.keys()], ['fresh']);
+  } finally { Date.now = realNow; }
+});

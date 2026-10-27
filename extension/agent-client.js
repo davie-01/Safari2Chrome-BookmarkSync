@@ -2,6 +2,9 @@
 
 export const HOST_NAME = 'com.mars.davie_01.bookmarksync';
 
+/** Chunks of a message that never completes are dropped after this long. */
+const CHUNK_TTL_MS = 2 * 60 * 1000;
+
 export class AgentClient {
   constructor({ connectNative = (n) => chrome.runtime.connectNative(n), timeoutMs = 60000 } = {}) {
     this.connectNative = connectNative;
@@ -71,16 +74,29 @@ export class AgentClient {
   _onMessage(m) {
     if (m && m.chunk) {
       const { cid, seq, total, b64 } = m.chunk;
+      const now = Date.now();
       let entry = this.chunks.get(cid);
-      if (!entry) { entry = { parts: new Array(total), got: 0 }; this.chunks.set(cid, entry); }
-      if (entry.parts[seq] === undefined) { entry.parts[seq] = b64; entry.got++; }
+      if (!entry) {
+        // a message whose remaining chunks never came (host died mid-way) is dropped
+        for (const [k, e] of this.chunks) if (now - e.at > CHUNK_TTL_MS) this.chunks.delete(k);
+        entry = { parts: new Array(total), got: 0, len: 0, at: now };
+        this.chunks.set(cid, entry);
+      }
+      if (entry.parts[seq] === undefined) {
+        // decode on arrival: the base64 text is not kept alongside the bytes
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        entry.parts[seq] = bytes;
+        entry.len += bytes.length;
+        entry.got++;
+      }
       if (entry.got === total) {
         this.chunks.delete(cid);
-        const bytes = entry.parts.map((p) => Uint8Array.from(atob(p), (c) => c.charCodeAt(0)));
-        const len = bytes.reduce((a, b) => a + b.length, 0);
-        const all = new Uint8Array(len);
+        const all = new Uint8Array(entry.len);
         let off = 0;
-        for (const b of bytes) { all.set(b, off); off += b.length; }
+        for (const b of entry.parts) { all.set(b, off); off += b.length; }
+        entry.parts = null;
         this._onMessage(JSON.parse(new TextDecoder().decode(all)));
       }
       return;

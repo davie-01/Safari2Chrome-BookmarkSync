@@ -251,5 +251,13 @@ final class StoreTests: XCTestCase {
             joined.append(Data(base64Encoded: obj["b64"] as! String)!)
         }
         XCTAssertEqual(joined, big)
+        // a slice (non-zero startIndex), as lines read off the socket can be
+        let slice = big[1000..<2_200_000]
+        var again = Data()
+        for f in FrameWriter.frames(for: slice) {
+            let obj = try JSON.object(f)["chunk"] as! [String: Any]
+            again.append(Data(base64Encoded: obj["b64"] as! String)!)
+        }
+        XCTAssertEqual(again, Data(slice))
     }
 }
