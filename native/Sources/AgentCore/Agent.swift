@@ -39,11 +39,13 @@ public final class Agent {
     private var lastRunning: Bool?
     private var engine: EngineHost?
     private var autoTimer: DispatchWorkItem?
-    /// Consecutive auto-sync retries after busy / changedSinceScan (only touched on `work`).
+    /// Consecutive auto-sync retries after a transient failure (only touched on `work`).
     private var autoRetries = 0
-    /// Something may need syncing since the last auto run started; the periodic check
-    /// skips the full scan otherwise (only touched on `work`).
-    private var autoDirty = true
+    /// Bumped by every change that may need syncing; `completedGeneration` is the newest one
+    /// an auto run has fully handled (both only touched on `work`).
+    private var generation = 1
+    private var completedGeneration = 0
+    private var autoDirty: Bool { completedGeneration < generation }
     private var lastAutoCheck = Date.distantPast
     private var lastPeriodic = Date()
     static let periodicInterval: TimeInterval = 15 * 60
@@ -529,8 +531,10 @@ public final class Agent {
         let (on, delay) = autoSettings()
         guard on, engine != nil else { return }
         work.async {
-            if reason != "retry" { self.autoRetries = 0 }
-            if reason != "periodic" { self.autoDirty = true }
+            if !Agent.followUpReasons.contains(reason) {
+                self.autoRetries = 0
+                if reason != "periodic" { self.generation += 1 }
+            }
             self.autoTimer?.cancel()
             let item = DispatchWorkItem { [weak self] in self?.runAuto(reason) }
             self.autoTimer = item
@@ -538,34 +542,86 @@ public final class Agent {
         }
     }
 
+    /// Runs scheduled by the scheduler itself, not by a change.
+    static let followUpReasons: Set<String> = ["retry", "again"]
+
     func runAuto(_ reason: String) {
         guard let engine = engine else { return }
-        // changes arriving from here on mark it dirty again
-        work.sync { autoDirty = false; lastAutoCheck = Date() }
+        let started = work.sync { () -> Int in lastAutoCheck = Date(); return generation }
         engine.handle("autoRun", nil) { [weak self] r in
+            guard let self = self else { return }
             switch r {
             case .success(let v):
                 if let d = v as? [String: Any], d["skipped"] == nil { Log.info("auto sync (\(reason)): ok=\(d["ok"] ?? "?") remaining=\(d["remaining"] ?? "?")") }
-                self?.broadcast(["event": "autoRun", "result": v ?? NSNull()])
+                self.broadcast(["event": "autoRun", "result": v ?? NSNull()])
             case .failure(let e):
-                self?.work.async { self?.autoDirty = true }
                 if e.code != "busy" { Log.warn("auto sync failed (\(reason)): \(e.code) \(e.message)") }
-                if e.code == "changedSinceScan" || e.code == "busy" { self?.retryAuto() }
             }
-            self?.afterRun()
+            let outcome = Agent.autoOutcome(r)
+            self.work.async { self.afterAuto(outcome, startedAt: started) }
+            self.afterRun()
         }
     }
 
-    /// Bookmarks still moving (or a manual run in progress): try again later, backing off,
-    /// and give up after a few attempts; the next real change schedules a fresh run.
-    func retryAuto() {
-        work.async {
-            guard self.autoRetries < Agent.maxAutoRetries else {
-                Log.warn("auto sync: giving up after \(self.autoRetries) retries")
-                return
+    // MARK: auto-sync scheduling (pure, tested)
+
+    enum AutoOutcome: Equatable {
+        case done       // in sync, or only decisions left for the user
+        case transient  // busy, bookmarks moved mid-run, endpoint briefly away: worth retrying
+        case failed     // needs something else to change first
+    }
+
+    enum AutoNext: Equatable {
+        case idle
+        case again              // changes arrived during the run
+        case retry(after: Double)
+        case giveUp
+    }
+
+    static let transientCodes: Set<String> = [
+        "busy", "changedSinceScan", "staleState", "timeout", "endpointOffline", "endpointGone",
+        "hostDisconnected", "concurrentModification",
+    ]
+
+    /// The engine reports most failures inside a successful reply (`skipped`, `ok: false`).
+    static func autoOutcome(_ r: Result<Any?, AgentError>) -> AutoOutcome {
+        switch r {
+        case .failure(let e):
+            return transientCodes.contains(e.code) ? .transient : .failed
+        case .success(let v):
+            guard let d = v as? [String: Any] else { return .failed }
+            if let skipped = d["skipped"] as? String { return skipped == "busy" ? .transient : .done }
+            if d["ok"] as? Bool == true { return .done }
+            let errors = d["errors"] as? [[String: Any]] ?? []
+            if errors.isEmpty { return .failed }
+            // an endpoint write that stopped part-way (no code: a precondition no longer held)
+            // is fixed by a fresh scan, like the coded transient ones
+            let transient = errors.allSatisfy { e in
+                (e["code"] as? String).map(transientCodes.contains) ?? (e["ep"] != nil)
             }
-            self.autoRetries += 1
-            self.scheduleAuto("retry", extraDelay: 5 * pow(2, Double(self.autoRetries - 1)))
+            return transient ? .transient : .failed
+        }
+    }
+
+    static func nextAuto(_ outcome: AutoOutcome, changedMeanwhile: Bool, retries: Int, maxRetries: Int = maxAutoRetries) -> AutoNext {
+        if changedMeanwhile { return .again }
+        switch outcome {
+        case .done, .failed: return .idle
+        case .transient: return retries < maxRetries ? .retry(after: 5 * pow(2, Double(retries))) : .giveUp
+        }
+    }
+
+    /// On `work`. A failed run leaves its changes pending (completedGeneration stays behind).
+    func afterAuto(_ outcome: AutoOutcome, startedAt started: Int) {
+        if outcome == .done { completedGeneration = max(completedGeneration, started) }
+        switch Agent.nextAuto(outcome, changedMeanwhile: generation != started, retries: autoRetries) {
+        case .idle: break
+        case .again: scheduleAuto("again")
+        case .retry(let after):
+            autoRetries += 1
+            scheduleAuto("retry", extraDelay: after)
+        case .giveUp:
+            Log.warn("auto sync: giving up after \(autoRetries) retries; waiting for the next change")
         }
     }
 
@@ -694,6 +750,9 @@ public final class Agent {
                     scheduleAuto("safari.changed", bookmarksChanged: true)
                 }
                 lastTreeFP = fp
+            } else {
+                // first look after start: the baseline later rewrites are compared with
+                lastTreeFP = safariTreeFingerprint()
             }
             lastStat = st
         }

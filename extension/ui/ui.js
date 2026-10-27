@@ -230,6 +230,7 @@ function renderScan() {
   if (!items.length) empty.textContent = writes ? t('没有需要你决定的项目；还有 {n} 个已确定的改动要写入各端，点「执行同步」即可。', { n: writes }) : t('所有浏览器已经一致，没有需要同步的内容。');
 
   ui.limit = PAGE;
+  ui.previewFailed = false;
   renderList();
   renderPlan(sc.preview);
 }
@@ -397,30 +398,42 @@ function updatePreview() {
   previewTimer = setTimeout(flushPreview, 150);
 }
 
-/** One preview at a time; choices changed meanwhile are folded into one more round. Resolves when the preview is current. */
+/**
+ * One preview at a time; choices changed meanwhile are folded into one more round.
+ * Resolves once the preview matches the current choices: true, or false when it failed.
+ */
 function flushPreview() {
   clearTimeout(previewTimer);
   previewTimer = null;
   if (previewRun) { previewDirty = true; return previewRun; }
   previewRun = (async () => {
+    let ok;
     do {
       previewDirty = false;
-      await refreshPreview();
+      ok = await refreshPreview();
     } while (previewDirty);
+    return ok;
   })().finally(() => { previewRun = null; });
   return previewRun;
 }
 
+/** true when ui.preview now matches ui.choices. */
 async function refreshPreview() {
-  if (!ui.scan) return;
+  if (!ui.scan) return false;
   try {
     const p = await call('preview', { scanId: ui.scan.scanId, choices: ui.choices });
     // the decision list can change with choices (e.g. an ignored new folder on one browser)
     const ids = (x) => x.map((i) => i.id).join('\n');
     if (ids(p.items) !== ids(ui.scan.items)) { ui.scan = { ...ui.scan, items: p.items }; renderList(); }
     renderPlan(p.preview);
+    ui.previewFailed = false;
+    return true;
   } catch (e) {
-    $('#plan').textContent = e.message;
+    // the shown plan is stale now: nothing may run on it
+    ui.previewFailed = true;
+    $('#plan').textContent = t('无法计算同步计划：{msg}。请修改选择后重试，或重新扫描。', { msg: e.message });
+    $('#btn-run').disabled = true;
+    return false;
   }
 }
 
@@ -450,8 +463,8 @@ function renderPlan(preview) {
 
 async function doRun() {
   // the delete confirmation must see the plan for the latest choices
-  if (previewTimer || previewRun) {
-    await flushPreview();
+  if (previewTimer || previewRun || ui.previewFailed) {
+    if (!(await flushPreview())) return; // no current plan: the reason is shown under the list
     if ($('#btn-run').disabled) return; // nothing left to write with these choices
   }
   const p = ui.preview || {};

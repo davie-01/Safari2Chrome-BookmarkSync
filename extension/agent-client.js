@@ -3,7 +3,12 @@
 export const HOST_NAME = 'com.mars.davie_01.bookmarksync';
 
 /** Chunks of a message that never completes are dropped after this long. */
-const CHUNK_TTL_MS = 2 * 60 * 1000;
+export const CHUNK_TTL_MS = 2 * 60 * 1000;
+/** Reassembly limits: anything beyond them is not a message the host would send. */
+export const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+export const MAX_PENDING_MESSAGES = 4;
+const MAX_CHUNK_B64 = 1024 * 1024; // a host frame is under Chrome's 1 MB
+const MAX_CHUNKS = Math.ceil(MAX_MESSAGE_BYTES / (600 * 1024)) + 1; // host chunks 600 KB
 
 export class AgentClient {
   constructor({ connectNative = (n) => chrome.runtime.connectNative(n), timeoutMs = 60000 } = {}) {
@@ -41,7 +46,7 @@ export class AgentClient {
       this.port = null;
       for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(Object.assign(new Error(err), { code: 'hostDisconnected' })); }
       this.pending.clear();
-      this.chunks.clear();
+      this._dropChunks();
       this._emit({ event: 'agent.disconnected', message: err });
     });
     return port;
@@ -72,35 +77,7 @@ export class AgentClient {
   }
 
   _onMessage(m) {
-    if (m && m.chunk) {
-      const { cid, seq, total, b64 } = m.chunk;
-      const now = Date.now();
-      let entry = this.chunks.get(cid);
-      if (!entry) {
-        // a message whose remaining chunks never came (host died mid-way) is dropped
-        for (const [k, e] of this.chunks) if (now - e.at > CHUNK_TTL_MS) this.chunks.delete(k);
-        entry = { parts: new Array(total), got: 0, len: 0, at: now };
-        this.chunks.set(cid, entry);
-      }
-      if (entry.parts[seq] === undefined) {
-        // decode on arrival: the base64 text is not kept alongside the bytes
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        entry.parts[seq] = bytes;
-        entry.len += bytes.length;
-        entry.got++;
-      }
-      if (entry.got === total) {
-        this.chunks.delete(cid);
-        const all = new Uint8Array(entry.len);
-        let off = 0;
-        for (const b of entry.parts) { all.set(b, off); off += b.length; }
-        entry.parts = null;
-        this._onMessage(JSON.parse(new TextDecoder().decode(all)));
-      }
-      return;
-    }
+    if (m && m.chunk) { this._onChunk(m.chunk); return; }
     if (m && m.rpc !== undefined) { this._answerRpc(m); return; }
     if (m && m.event) { this._emit(m); return; }
     const p = this.pending.get(m?.id);
@@ -109,6 +86,50 @@ export class AgentClient {
     clearTimeout(p.timer);
     if (m.ok) p.resolve(m.result);
     else p.reject(Object.assign(new Error(m.error?.message || 'agent error'), { code: m.error?.code || 'agentError' }));
+  }
+
+  _onChunk({ cid, seq, total, b64 } = {}) {
+    const valid = typeof cid === 'string' && Number.isInteger(total) && total >= 1 && total <= MAX_CHUNKS
+      && Number.isInteger(seq) && seq >= 0 && seq < total && typeof b64 === 'string' && b64.length <= MAX_CHUNK_B64;
+    let entry = valid ? this.chunks.get(cid) : null;
+    if (!valid || (entry && entry.total !== total)) {
+      console.warn('dropping malformed message chunk', { cid, seq, total });
+      if (typeof cid === 'string') this._dropChunks(cid);
+      return;
+    }
+    if (!entry) {
+      if (this.chunks.size >= MAX_PENDING_MESSAGES) this._dropChunks(this.chunks.keys().next().value); // oldest
+      // a message whose remaining chunks never come (host died mid-way) goes after a while
+      entry = { total, parts: new Array(total), got: 0, len: 0, timer: setTimeout(() => this._dropChunks(cid), CHUNK_TTL_MS) };
+      this.chunks.set(cid, entry);
+    }
+    if (entry.parts[seq] !== undefined) return;
+    // decode on arrival: the base64 text is not kept alongside the bytes
+    let bin;
+    try { bin = atob(b64); } catch { this._dropChunks(cid); return; }
+    if (entry.len + bin.length > MAX_MESSAGE_BYTES) { console.warn('dropping oversized message', cid); this._dropChunks(cid); return; }
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    entry.parts[seq] = bytes;
+    entry.len += bytes.length;
+    entry.got++;
+    if (entry.got < total) return;
+    this._dropChunks(cid);
+    const all = new Uint8Array(entry.len);
+    let off = 0;
+    for (const b of entry.parts) { all.set(b, off); off += b.length; }
+    let msg;
+    try { msg = JSON.parse(new TextDecoder().decode(all)); } catch { console.warn('dropping undecodable message', cid); return; }
+    this._onMessage(msg);
+  }
+
+  /** Forgets one partly received message, or all of them. */
+  _dropChunks(cid) {
+    for (const [k, e] of this.chunks) {
+      if (cid !== undefined && k !== cid) continue;
+      clearTimeout(e.timer);
+      this.chunks.delete(k);
+    }
   }
 
   async _answerRpc(m) {
