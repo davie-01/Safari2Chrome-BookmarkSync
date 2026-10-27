@@ -271,6 +271,7 @@ export function computeDiff(state, sTree, cTree, opts = {}) {
         else if (b && chC[f] && !chS[f]) c2s.push(f);
         else conf.push(f);
       }
+      if (!s2c.length && !c2s.length && !conf.length) continue;
       const base = { key, kind, s: info('s', key), c: info('c', key), b: b || null };
       if (s2c.length) push({ ...base, id: `mod:s:${key}`, type: 'modify', from: 's', fields: s2c,
         choices: [{ id: 'apply', writes: 'c' }, { id: 'revert', writes: 's' }, { id: 'ignore' }],

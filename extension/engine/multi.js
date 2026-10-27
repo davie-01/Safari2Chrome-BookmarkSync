@@ -70,9 +70,12 @@ function subtreeIds(tree, id) {
  * @param {Array}  p.endpoints   [{ id, name, mode, tree, pair, idGen? }] online + enabled, in processing order
  * @param {object} p.choices     user choices keyed by `${endpointId}|${itemId}` or `multi|conf:${key}`
  * @param {object} p.settings    { orderMaster, syncOrder }
+ * @param {object} [p.cache]     per-snapshot scratch object: cross conflicts do not depend on
+ *                               the choices, so previews of one scan compute them once
  */
-export function runMulti({ hub, endpoints, choices = {}, settings = {} }) {
-  const groups = crossConflicts(hub, endpoints, settings);
+export function runMulti({ hub, endpoints, choices = {}, settings = {}, cache = null }) {
+  const groups = cache?.groups ?? crossConflicts(hub, endpoints, settings);
+  if (cache) cache.groups = groups;
   return passes(hub, endpoints, choices, groups, settings);
 }
 

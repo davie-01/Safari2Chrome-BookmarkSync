@@ -442,9 +442,9 @@ async function doRun() {
   btn.disabled = true;
   btn.textContent = t('同步中…');
   try {
-    const r = await call('run', { scanId: ui.scan.scanId, choices: ui.choices });
+    const r = await call('run', { scanId: ui.scan.scanId, choices: ui.choices, rescan: true });
     await loadStatus();
-    ui.scan = await call('scan');
+    ui.scan = r.scan || await call('scan');
     ui.choices = {};
     renderScan();
     renderResult(r);

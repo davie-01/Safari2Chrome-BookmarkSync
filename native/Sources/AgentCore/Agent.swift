@@ -33,11 +33,21 @@ public final class Agent {
     private var rpcSeq = 0
     private var timer: DispatchSourceTimer?
     private var lastStat: (mtime: TimeInterval, size: Int)?
+    /// Fingerprint of the Safari tree the engine sees (see safariTreeFingerprint).
+    private var lastTreeFP: String?
     private var lastRunning: Bool?
     private var engine: EngineHost?
     private var autoTimer: DispatchWorkItem?
     /// Consecutive auto-sync retries after busy / changedSinceScan (only touched on `work`).
     private var autoRetries = 0
+    /// Something may need syncing since the last auto run started; the periodic check
+    /// skips the full scan otherwise (only touched on `work`).
+    private var autoDirty = true
+    private var lastAutoCheck = Date.distantPast
+    private var lastPeriodic = Date()
+    static let periodicInterval: TimeInterval = 15 * 60
+    /// A full scan even without any sign of change, against missed events.
+    static let fullCheckInterval: TimeInterval = 6 * 3600
     static let maxAutoRetries = 5
     private var periodic: DispatchSourceTimer?
     private var kv: [String: Any] = [:]
@@ -469,6 +479,7 @@ public final class Agent {
                     do {
                         let r = try self.safari.apply(ops, options: o)
                         self.lastStat = self.safari.stat() // our own write is not an external change
+                        self.lastTreeFP = Agent.treeFingerprint(r.tree)
                         return ["applied": r.applied, "backup": (r.backup as Any?) ?? NSNull()]
                     } catch let e as AgentError where e.code == "safariRunning" {
                         return ["deferred": true, "reason": e.message]
@@ -506,6 +517,7 @@ public final class Agent {
         guard on, engine != nil else { return }
         work.async {
             if reason != "retry" { self.autoRetries = 0 }
+            if reason != "periodic" { self.autoDirty = true }
             self.autoTimer?.cancel()
             let item = DispatchWorkItem { [weak self] in self?.runAuto(reason) }
             self.autoTimer = item
@@ -515,12 +527,15 @@ public final class Agent {
 
     func runAuto(_ reason: String) {
         guard let engine = engine else { return }
+        // changes arriving from here on mark it dirty again
+        work.sync { autoDirty = false; lastAutoCheck = Date() }
         engine.handle("autoRun", nil) { [weak self] r in
             switch r {
             case .success(let v):
                 if let d = v as? [String: Any], d["skipped"] == nil { Log.info("auto sync (\(reason)): ok=\(d["ok"] ?? "?") remaining=\(d["remaining"] ?? "?")") }
                 self?.broadcast(["event": "autoRun", "result": v ?? NSNull()])
             case .failure(let e):
+                self?.work.async { self?.autoDirty = true }
                 if e.code != "busy" { Log.warn("auto sync failed (\(reason)): \(e.code) \(e.message)") }
                 if e.code == "changedSinceScan" || e.code == "busy" { self?.retryAuto() }
             }
@@ -551,15 +566,26 @@ public final class Agent {
 
     func startPeriodic() {
         let t = DispatchSource.makeTimerSource(queue: work)
-        t.schedule(deadline: .now() + 30, repeating: 15 * 60, leeway: .seconds(30))
+        t.schedule(deadline: .now() + 30, repeating: Agent.periodicInterval, leeway: .seconds(30))
         t.setEventHandler { [weak self] in
-            self?.scheduleAuto("periodic")
+            self?.periodicCheck()
             Installer.refreshNativeHostManifests()
             self?.autoCleanIfDue()
             self?.selfCleanIfAppGone()
         }
         t.resume()
         periodic = t
+    }
+
+    /// Full scan only when something may have changed: an event since the last auto run,
+    /// a wake from sleep (the timer was late), or the long safety interval.
+    func periodicCheck() {
+        let now = Date()
+        let slept = now.timeIntervalSince(lastPeriodic) > Agent.periodicInterval * 2
+        lastPeriodic = now
+        if autoDirty || slept || now.timeIntervalSince(lastAutoCheck) > Agent.fullCheckInterval {
+            scheduleAuto("periodic")
+        }
     }
 
     /// Once a day: drop old backups and logs by the retention settings.
@@ -620,10 +646,28 @@ public final class Agent {
         }
         if changed {
             if lastStat != nil || st == nil {
-                broadcast(["event": "safari.changed", "mtime": st?.mtime ?? 0])
-                scheduleAuto("safari.changed", bookmarksChanged: true)
+                // Safari and iCloud also rewrite the file for their own metadata; only a
+                // change to the bookmarks the engine sees is worth a sync.
+                let fp = safariTreeFingerprint()
+                if fp == nil || fp != lastTreeFP {
+                    broadcast(["event": "safari.changed", "mtime": st?.mtime ?? 0])
+                    scheduleAuto("safari.changed", bookmarksChanged: true)
+                }
+                lastTreeFP = fp
             }
             lastStat = st
         }
+    }
+
+    /// nil when the file cannot be read (then every change counts).
+    func safariTreeFingerprint() -> String? {
+        guard let r = try? safari.readNormalized() else { return nil }
+        return Agent.treeFingerprint(r.tree)
+    }
+
+    static func treeFingerprint(_ tree: NormTree) -> String? {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        return (try? enc.encode(tree)).map(sha256Hex)
     }
 }

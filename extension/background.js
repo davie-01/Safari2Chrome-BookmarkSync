@@ -132,7 +132,7 @@ const handlers = {
   },
   scan: () => engine('scan', {}, 120000),
   preview: (m) => engine('preview', { scanId: m.scanId, choices: m.choices }, 120000),
-  run: async (m) => { const r = await engine('run', { scanId: m.scanId, choices: m.choices }, 600000); refreshBadge(); return r; },
+  run: async (m) => { const r = await engine('run', { scanId: m.scanId, choices: m.choices, rescan: m.rescan }, 600000); refreshBadge(); return r; },
   settings: () => engine('settings'),
   saveSettings: (m) => engine('saveSettings', { patch: m.patch }),
   history: () => engine('history'),

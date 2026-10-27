@@ -726,6 +726,7 @@
           else if (b && chC[f] && !chS[f]) c2s.push(f);
           else conf.push(f);
         }
+        if (!s2c.length && !c2s.length && !conf.length) continue;
         const base = { key, kind, s: info("s", key), c: info("c", key), b: b || null };
         if (s2c.length) push({
           ...base,
@@ -1419,8 +1420,9 @@
     for (const r of ROOTS) if (find(tree.roots[r])) break;
     return out;
   }
-  function runMulti({ hub, endpoints, choices = {}, settings = {} }) {
-    const groups = crossConflicts(hub, endpoints, settings);
+  function runMulti({ hub, endpoints, choices = {}, settings = {}, cache = null }) {
+    const groups = cache?.groups ?? crossConflicts(hub, endpoints, settings);
+    if (cache) cache.groups = groups;
     return passes(hub, endpoints, choices, groups, settings);
   }
   function pairOpts(E, settings) {
@@ -1707,7 +1709,8 @@
         pair: snap.state.endpoints[ep.id]?.pair,
         idGen: ep.kind === "safari" ? () => newSafariUUID() : null
       }));
-      return runMulti({ hub: snap.state.hub, endpoints, choices, settings: snap.settings });
+      snap.cache ?? (snap.cache = {});
+      return runMulti({ hub: snap.state.hub, endpoints, choices, settings: snap.settings, cache: snap.cache });
     }
     view(snap, r) {
       const names = Object.fromEntries(snap.online.map(({ ep }) => [ep.id, ep.name]));
@@ -1723,7 +1726,10 @@
     }
     async scan() {
       const snap = await this.snapshot();
-      const r = this.compute(snap, {});
+      return this.remember(snap, this.compute(snap, {}));
+    }
+    /** Registers a computed snapshot as a scan the UI can preview and run. */
+    remember(snap, r) {
       const scanId = `scan-${++this.seq}`;
       this.scans.set(scanId, { snap, at: this.now() });
       for (const k of [...this.scans.keys()].slice(0, -3)) this.scans.delete(k);
@@ -1734,13 +1740,15 @@
       if (!s) throw Object.assign(new Error("scan expired, rescan"), { code: "staleScan" });
       return this.view(s.snap, this.compute(s.snap, choices || {}));
     }
-    async run(scanId, choices = {}, { auto = false } = {}) {
+    /** `rescan`: also return the post-run state as a new scan (the UI shows it next). */
+    async run(scanId, choices = {}, { auto = false, rescan = false } = {}) {
       if (this.running) throw Object.assign(new Error("a sync is already running"), { code: "busy" });
       const s = this.scans.get(scanId);
       if (!s) throw Object.assign(new Error("scan expired, rescan"), { code: "staleScan" });
       this.running = true;
       const started = this.now();
       const result = { at: started, auto, endpoints: {}, errors: [], ok: false };
+      let verified = null;
       try {
         const snap = s.snap;
         const fresh = await this.snapshot();
@@ -1778,21 +1786,26 @@
         }
         const state = snap.state;
         state.hub = r.hub;
+        const online = [];
+        const failed = [...snap.failed];
         for (const { ep } of snap.online) {
-          let after;
+          let read;
           try {
-            after = (await ep.read(this.epPrefs(settings, ep.id))).tree;
-          } catch {
+            read = await ep.read(this.epPrefs(settings, ep.id));
+          } catch (err) {
+            failed.push({ id: ep.id, name: ep.name, code: err?.code, message: err?.message });
             continue;
           }
+          online.push({ ep, read });
           const x = exec[ep.id] || {};
           const results = { applied: !!(x && !x.failed && !x.deferred && !x.error && r.perEp[ep.id].ops.length), created: x.created || {} };
-          const pair = commitEndpoint({ pair: state.endpoints[ep.id].pair, perEp: r.perEp[ep.id], hubTree: r.hub.tree, epTreeAfter: after, results, now: this.now() });
+          const pair = commitEndpoint({ pair: state.endpoints[ep.id].pair, perEp: r.perEp[ep.id], hubTree: r.hub.tree, epTreeAfter: read.tree, results, now: this.now() });
           state.endpoints[ep.id] = { ...state.endpoints[ep.id], name: ep.name, pair, lastSyncAt: this.now() };
         }
-        await this.deps.store.save(state, snap.revision);
-        const again = await this.snapshot();
+        const revision = await this.deps.store.save(state, snap.revision);
+        const again = { settings, state: structuredClone(state), revision, online, failed };
         const r2 = this.compute(again, {});
+        if (rescan) verified = { snap: again, r: r2 };
         result.remaining = r2.items.length;
         const pendingWrites = Object.fromEntries(Object.entries(r2.summary).filter(([k]) => k !== "hub").map(([k, v]) => [k, v.total]));
         result.pendingWrites = pendingWrites;
@@ -1826,7 +1839,7 @@
           await this.deps.kv.set("history", hist.slice(0, HISTORY_MAX));
         }
       }
-      return result;
+      return verified ? { ...result, scan: this.remember(verified.snap, verified.r) } : result;
     }
     /** Resident mode policy over the decision list. */
     async autoRun() {
@@ -1976,7 +1989,7 @@
     defaults: async () => DEFAULT_SETTINGS,
     scan: () => coordinator.scan(),
     preview: (p) => coordinator.preview(p.scanId, p.choices),
-    run: (p) => coordinator.run(p.scanId, p.choices || {}),
+    run: (p) => coordinator.run(p.scanId, p.choices || {}, { rescan: !!p.rescan }),
     autoRun: () => coordinator.autoRun(),
     history: async () => await native("kv.get", { key: "history" }) || [],
     pending: async () => await native("kv.get", { key: "pending" }) || null,

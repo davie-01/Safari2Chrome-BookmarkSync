@@ -301,3 +301,29 @@ test('multi: a default decision that writes back to the endpoint is executed (no
   assert.equal((await w.coord.scan()).items.length, 0);
   assert.equal(w.safari.tree().roots['root:bar'].children[0].title, 'f0');
 });
+
+test('multi: run with rescan returns the post-run scan without reading every endpoint again', async () => {
+  const w = makeWorld();
+  w.safari.add('root:bar', 'A', 'https://a.test/');
+  w.safari.add('root:bar', 'B', 'https://b.test/');
+  await sync(w);
+  w.safari.add('root:bar', 'C', 'https://c.test/');
+  const reads = {};
+  for (const ep of Object.values(w.eps)) {
+    const read = ep.read;
+    ep.read = (...a) => { reads[ep.id] = (reads[ep.id] || 0) + 1; return read.apply(ep, a); };
+  }
+  const s = await w.coord.scan();
+  for (const k of Object.keys(reads)) reads[k] = 0;
+  const r = await w.coord.run(s.scanId, {}, { rescan: true });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(reads, { safari: 2, chrome: 2, edge: 2 }); // freshness + after write
+  assert.ok(r.scan?.scanId);
+  const fresh = await w.coord.scan();
+  const strip = (x) => JSON.stringify({ ...x, scanId: null });
+  assert.equal(strip(r.scan), strip(fresh));
+  // the returned scan is live: it can be previewed and run
+  assert.ok(w.coord.preview(r.scan.scanId, {}));
+  // runs without rescan (auto, the app's menu) carry no scan
+  assert.equal((await w.coord.run(fresh.scanId, {})).scan, undefined);
+});
