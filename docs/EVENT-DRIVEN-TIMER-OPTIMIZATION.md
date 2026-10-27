@@ -520,7 +520,7 @@ Chrome 书签事件 ─────┤
 | 临时 Agent 2 秒父进程检查 | 已移除 | 改为检测 stdin 管道 EOF；stdin 不是 App 的管道时，退回到 `DispatchSourceProcess` 监听父进程退出 |
 | Agent 每日空定时器 | 已移除 | 改用 `NSMachPort` 保持主 RunLoop 运行 |
 | 扩展每分钟 alarm | 已移除 | 由 Native Host（`AgentUpstream`）负责重连 Agent，并发送 `agent.available`；扩展只在 Host 本身不可达时退避：3 秒和 10 秒用定时器，30 秒起用一次性 alarm，8 次后停止。`background.test.js` 与 `AgentUpstreamTests` 覆盖这些行为 |
-| Agent 15 分钟维护 | 待第三阶段 | |
+| Agent 15 分钟维护 | 已拆分 | 清单刷新：Agent 启动时，以及 Chromium 系浏览器启动时（按 bundle id 识别，10 秒后补一次，因为首次启动时数据目录可能还未创建）。清理：Agent 启动时、Safari 写入并生成备份后、修改设置后。日志：写入时超过 2MB 即轮转（`LogTests`）。自清理：监听 App 包本身，消失后进入 15 分钟宽限期，期间重新出现即取消。这个定时器现在只剩同步兜底检查（`periodicCheck`），待第四阶段移除 |
 | Agent 30 秒 Safari 兜底 | 待第四阶段 | |
 
 实施中新发现的问题：Agent 先 `bind()` 后 `listen()`，socket 文件出现时还不能连接。Host 在 socket 事件之后的连接若被拒绝，会在约 3 秒内补试几次（50 毫秒起翻倍）。App 端由一次性退避兜底。

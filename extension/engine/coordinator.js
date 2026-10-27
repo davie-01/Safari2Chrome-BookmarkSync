@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS = {
   backupDays: 30,           // retention for Safari backups (the newest backupKeepMin are always kept)
   logDays: 30,              // retention for log files
   backupKeepMin: 10,
-  autoClean: true,          // the agent prunes once a day
+  autoClean: true,          // the agent prunes on new backups, at start and on settings changes
   language: 'system',       // interface language: system | zh | en (app and extension share it)
   endpoints: {},            // id -> { enabled, mode: both|receive|send, chromeStore, name }
 };

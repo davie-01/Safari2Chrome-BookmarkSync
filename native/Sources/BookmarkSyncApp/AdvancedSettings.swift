@@ -73,7 +73,7 @@ struct AdvancedPage: View {
                             }
                         }
                         .help(t("最近 {n} 份备份不论多久都会保留。", ["n": link.settings.backupKeepMin ?? 10]))
-                        SettingRow(t("每天自动清理"), note: t("最近 {n} 份备份始终保留", ["n": link.settings.backupKeepMin ?? 10])) {
+                        SettingRow(t("自动清理旧备份和日志"), note: t("最近 {n} 份备份始终保留", ["n": link.settings.backupKeepMin ?? 10])) {
                             Toggle("", isOn: Binding(get: { link.settings.autoClean ?? true }, set: { link.save(["autoClean": $0]) }))
                                 .labelsHidden().toggleStyle(.switch)
                         }

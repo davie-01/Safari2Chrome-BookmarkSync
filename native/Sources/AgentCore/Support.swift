@@ -58,32 +58,52 @@ public final class Log {
     public static let shared = Log()
     private let lock = NSLock()
     private var handle: FileHandle?
+    private var size = 0
+    /// A log past this size moves to <name>.1.log (replacing the previous one) as it is
+    /// written, so a long-running agent's log stays bounded without anything on a timer.
+    static let maxBytes = 2_000_000
     public var name = "agent"
+    var directory = Paths.logs // tests point it elsewhere
     public var echoToStderr = false
 
     public func open(name: String) {
         lock.lock(); defer { lock.unlock() }
         self.name = name
-        try? Paths.ensureDir(Paths.logs)
-        let url = Paths.logs.appendingPathComponent("\(name).log")
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-           let size = attrs[.size] as? Int, size > 2_000_000 {
-            let old = Paths.logs.appendingPathComponent("\(name).1.log")
-            try? FileManager.default.removeItem(at: old)
-            try? FileManager.default.moveItem(at: url, to: old)
-        }
+        openLocked()
+    }
+
+    private var url: URL { directory.appendingPathComponent("\(name).log") }
+
+    private func openLocked() {
+        try? handle?.close()
+        try? Paths.ensureDir(directory)
+        let current = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+        if current > Log.maxBytes { rotateFileLocked() }
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
         }
         handle = try? FileHandle(forWritingTo: url)
-        handle?.seekToEndOfFile()
+        size = Int(handle?.seekToEndOfFile() ?? 0)
+    }
+
+    private func rotateFileLocked() {
+        let old = directory.appendingPathComponent("\(name).1.log")
+        try? FileManager.default.removeItem(at: old)
+        try? FileManager.default.moveItem(at: url, to: old)
     }
 
     public func write(_ level: String, _ message: String) {
         let line = "\(ISO8601DateFormatter().string(from: Date())) [\(name):\(getpid())] \(level) \(message)\n"
         lock.lock(); defer { lock.unlock() }
         if let d = line.data(using: .utf8) {
+            if handle != nil, size + d.count > Log.maxBytes {
+                try? handle?.close()
+                handle = nil
+                rotateFileLocked()
+                openLocked()
+            }
             handle?.write(d)
+            size += d.count
             if echoToStderr { FileHandle.standardError.write(d) }
         }
     }

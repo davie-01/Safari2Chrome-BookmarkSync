@@ -1638,7 +1638,7 @@
     // retention for log files
     backupKeepMin: 10,
     autoClean: true,
-    // the agent prunes once a day
+    // the agent prunes on new backups, at start and on settings changes
     language: "system",
     // interface language: system | zh | en (app and extension share it)
     endpoints: {}

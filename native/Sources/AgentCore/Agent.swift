@@ -95,7 +95,7 @@ public final class Agent {
         startWatcher()
         startPeriodic()
         if CommandLine.arguments.contains("--exit-with-parent") { startParentWatch() }
-        Installer.refreshNativeHostManifests()
+        work.async { self.startMaintenance() }
         Thread.detachNewThread { [self] in acceptLoop(fd) }
         // The main thread runs the run loop: NSWorkspace delivers Safari launch/quit there.
         // A port with nothing on it keeps run() from returning without ever waking it.
@@ -507,6 +507,7 @@ public final class Agent {
                         let r = try self.safari.apply(ops, options: o)
                         self.lastStat = self.safari.stat() // our own write is not an external change
                         self.lastTreeFP = Agent.treeFingerprint(r.tree)
+                        if r.backup != nil { self.autoClean("backup") } // the only way backups grow
                         return ["applied": r.applied, "backup": (r.backup as Any?) ?? NSNull()]
                     } catch let e as AgentError where e.code == "safariRunning" {
                         return ["deferred": true, "reason": e.message]
@@ -643,19 +644,92 @@ public final class Agent {
 
     func settingsChanged() {
         scheduleAuto("settings")
+        work.async { self.autoClean("settings") } // retention may have changed
     }
 
     func startPeriodic() {
         let t = DispatchSource.makeTimerSource(queue: work)
         t.schedule(deadline: .now() + 30, repeating: Agent.periodicInterval, leeway: .seconds(30))
-        t.setEventHandler { [weak self] in
-            self?.periodicCheck()
-            Installer.refreshNativeHostManifests()
-            self?.autoCleanIfDue()
-            self?.selfCleanIfAppGone()
-        }
+        t.setEventHandler { [weak self] in self?.periodicCheck() }
         t.resume()
         periodic = t
+    }
+
+    // MARK: maintenance, each on the event that makes it necessary (on `work`)
+
+    func startMaintenance() {
+        // installs and upgrades start the agent, so this covers them
+        Installer.refreshNativeHostManifests()
+        autoClean("start")
+        watchBrowserLaunches()
+        watchAppBundle()
+    }
+
+    /// Bundle ids of the Chromium browsers in Installer.chromiumDirs.
+    static let chromiumBundleIDs: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary",
+        "org.chromium.Chromium", "com.microsoft.edgemac", "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev",
+        "com.microsoft.edgemac.Canary", "com.brave.Browser", "com.vivaldi.Vivaldi", "company.thebrowser.Browser",
+        "com.operasoftware.Opera", "ru.yandex.desktop.yandex-browser",
+    ]
+
+    /// A browser starting may be newly installed (no manifest yet) or have lost ours. Its
+    /// first start creates its data folder a moment later, so look again shortly after.
+    func watchBrowserLaunches() {
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: nil) { [weak self] n in
+            let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard let id = app?.bundleIdentifier, Agent.chromiumBundleIDs.contains(id), let self = self else { return }
+            self.work.async { Installer.refreshNativeHostManifests() }
+            self.work.asyncAfter(deadline: .now() + 10) { Installer.refreshNativeHostManifests() }
+        }
+    }
+
+    /// Drops old backups and logs by the retention settings. Backups only grow when Safari
+    /// is written and logs rotate as they grow, so this runs then, at start and when the
+    /// settings change, never on a timer.
+    func autoClean(_ reason: String) {
+        let st = Agent.readSettings() ?? [:]
+        guard st["autoClean"] as? Bool != false else { return }
+        let report = Cleanup.clean(
+            backupDays: st["backupDays"] as? Int ?? Cleanup.defaultBackupDays,
+            logDays: st["logDays"] as? Int ?? Cleanup.defaultLogDays,
+            keepMinBackups: st["backupKeepMin"] as? Int ?? Cleanup.defaultKeepMinBackups)
+        kvSet("lastCleanAt", Date().timeIntervalSince1970 * 1000)
+        Log.info("cleanup (\(reason)): \(Cleanup.describe(report))")
+    }
+
+    /// The app was dragged to the Trash: clean up after ourselves and stop. Watched on the
+    /// bundle itself; an upgrade replaces it within seconds, so act only if it is still gone
+    /// after a grace period.
+    static let appGoneGrace: TimeInterval = 15 * 60
+    private var appWatcher: FileWatcher?
+    private var appGoneCheck: DispatchWorkItem?
+
+    func watchAppBundle() {
+        guard let app = Uninstall.appBundle else { return } // not running from an app bundle
+        let w = FileWatcher(url: app, queue: work) { [weak self] in self?.appBundleChanged() }
+        if !w.start() { Log.warn("cannot watch \(app.path)") }
+        appWatcher = w
+        appBundleChanged()
+    }
+
+    func appBundleChanged() {
+        guard Uninstall.appBundleMissing() else {
+            if appGoneCheck != nil { Log.info("app bundle is back; no cleanup") }
+            appGoneCheck?.cancel()
+            appGoneCheck = nil
+            return
+        }
+        guard appGoneCheck == nil else { return }
+        Log.warn("app bundle is missing; cleaning up in \(Int(Agent.appGoneGrace / 60)) minutes unless it comes back")
+        let check = DispatchWorkItem { [weak self] in
+            guard Uninstall.appBundleMissing() else { self?.appGoneCheck = nil; return }
+            Log.info("app bundle is gone; removing what is left and stopping")
+            Uninstall.run(trashApp: false)
+            exit(0)
+        }
+        appGoneCheck = check
+        work.asyncAfter(deadline: .now() + Agent.appGoneGrace, execute: check)
     }
 
     /// Full scan only when something may have changed: an event since the last auto run,
@@ -667,36 +741,6 @@ public final class Agent {
         if autoDirty || slept || now.timeIntervalSince(lastAutoCheck) > Agent.fullCheckInterval {
             scheduleAuto("periodic")
         }
-    }
-
-    /// Once a day: drop old backups and logs by the retention settings.
-    func autoCleanIfDue() {
-        let st = Agent.readSettings() ?? [:]
-        guard st["autoClean"] as? Bool != false else { return }
-        let last = kv["lastCleanAt"] as? Double ?? 0
-        let now = Date().timeIntervalSince1970 * 1000
-        guard now - last > 20 * 3600 * 1000 else { return }
-        let report = Cleanup.clean(
-            backupDays: st["backupDays"] as? Int ?? Cleanup.defaultBackupDays,
-            logDays: st["logDays"] as? Int ?? Cleanup.defaultLogDays,
-            keepMinBackups: st["backupKeepMin"] as? Int ?? Cleanup.defaultKeepMinBackups)
-        kvSet("lastCleanAt", now)
-        Log.info("cleanup (daily): \(Cleanup.describe(report))")
-    }
-
-    /// The app was dragged to the Trash: clean up after ourselves and stop. An upgrade
-    /// replaces the bundle in seconds, so only act after two checks 15 minutes apart.
-    private var appGoneStrikes = 0
-    func selfCleanIfAppGone() {
-        guard Uninstall.appBundleMissing() else { appGoneStrikes = 0; return }
-        appGoneStrikes += 1
-        guard appGoneStrikes >= 2 else {
-            Log.warn("app bundle is missing; will clean up if it is still gone at the next check")
-            return
-        }
-        Log.info("app bundle is gone; removing what is left and stopping")
-        Uninstall.run(trashApp: false)
-        exit(0)
     }
 
     // MARK: Safari watcher

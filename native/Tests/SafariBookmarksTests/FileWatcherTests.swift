@@ -74,6 +74,27 @@ final class FileWatcherTests: XCTestCase {
         w.stop()
     }
 
+    /// The agent watches its own app bundle: moved to the Trash (a rename), then an upgrade
+    /// putting a new one in place.
+    func testBundleMovedAwayAndReplaced() throws {
+        let dir = try tempDir()
+        let app = dir.appendingPathComponent("BookmarkSync.app")
+        let trash = dir.appendingPathComponent("trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let lock = NSLock()
+        var n = 0
+        let w = FileWatcher(url: app, queue: DispatchQueue(label: "fw.app")) { lock.lock(); n += 1; lock.unlock() }
+        XCTAssertTrue(w.start())
+        let hits = { () -> Int in lock.lock(); defer { lock.unlock() }; return n }
+        try expectChange(hits) { try FileManager.default.moveItem(at: app, to: trash.appendingPathComponent("BookmarkSync.app")) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app.path))
+        try expectChange(hits) { try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true) }
+        // and the new bundle is watched in turn
+        try expectChange(hits) { try FileManager.default.removeItem(at: app) }
+        w.stop()
+    }
+
     func testUnwatchableFolder() {
         let w = FileWatcher(url: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/Bookmarks.plist"),
                             queue: DispatchQueue(label: "fw.test2")) {}
