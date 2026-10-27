@@ -32,7 +32,7 @@ public final class Agent {
     private var conns: [Int32: Conn] = [:]
     private let connsLock = NSLock()
     private var rpcSeq = 0
-    private var timer: DispatchSourceTimer?
+    private var shadowTimer: DispatchSourceTimer?
     private var lastStat: (mtime: TimeInterval, size: Int)?
     /// Fingerprint of the Safari tree the engine sees (see safariTreeFingerprint).
     private var lastTreeFP: String?
@@ -41,18 +41,10 @@ public final class Agent {
     private var autoTimer: DispatchWorkItem?
     /// Consecutive auto-sync retries after a transient failure (only touched on `work`).
     private var autoRetries = 0
-    /// Bumped by every change that may need syncing; `completedGeneration` is the newest one
-    /// an auto run has fully handled (both only touched on `work`).
+    /// Bumped by every change that may need syncing, so a run can tell whether more came in
+    /// while it ran (only touched on `work`).
     private var generation = 1
-    private var completedGeneration = 0
-    private var autoDirty: Bool { completedGeneration < generation }
-    private var lastAutoCheck = Date.distantPast
-    private var lastPeriodic = Date()
-    static let periodicInterval: TimeInterval = 15 * 60
-    /// A full scan even without any sign of change, against missed events.
-    static let fullCheckInterval: TimeInterval = 6 * 3600
     static let maxAutoRetries = 5
-    private var periodic: DispatchSourceTimer?
     private var kv: [String: Any] = [:]
 
     public init(safari: SafariStore? = nil, state: StateStore = StateStore(), socketPath: String = Paths.socket.path) {
@@ -93,7 +85,8 @@ public final class Agent {
         }
         Log.info("agent \(AppInfo.version) listening on \(socketPath); safari=\(safari.url.path) access=\(safari.access().rawValue) engine=\(engine != nil)")
         startWatcher()
-        startPeriodic()
+        startShadowPoll()
+        scheduleAuto("start") // whatever changed while no agent was running
         if CommandLine.arguments.contains("--exit-with-parent") { startParentWatch() }
         work.async { self.startMaintenance() }
         Thread.detachNewThread { [self] in acceptLoop(fd) }
@@ -227,7 +220,11 @@ public final class Agent {
         conn.writeLock.unlock()
     }
 
+    /// Sees every broadcast (tests).
+    var broadcastObserver: (([String: Any]) -> Void)?
+
     func broadcast(_ obj: [String: Any]) {
+        broadcastObserver?(obj)
         connsLock.lock(); let all = Array(conns.values); connsLock.unlock()
         for c in all where c.endpoint != nil || c.browserPath == nil { send(c, obj) }
     }
@@ -375,6 +372,7 @@ public final class Agent {
         case "ping":
             return ["pong": true]
         case "hello", "status":
+            ensureSafariWatch() // a UI asking: maybe Full Disk Access was just granted
             let st = safari.stat()
             return [
                 "version": AppInfo.version,
@@ -537,8 +535,8 @@ public final class Agent {
         return (s["autoSync"] as? Bool ?? false, max(2, s["autoDelay"] as? Double ?? 5))
     }
 
-    /// `bookmarksChanged`: tell the UIs their scan is stale. Periodic checks, settings
-    /// changes and retries are not bookmark changes and must not say so.
+    /// `bookmarksChanged`: tell the UIs their scan is stale. Start-up, settings changes and
+    /// retries are not bookmark changes and must not say so.
     func scheduleAuto(_ reason: String, bookmarksChanged: Bool = false, extraDelay: Double = 0) {
         if bookmarksChanged { broadcast(["event": "changed", "reason": reason]) }
         let (on, delay) = autoSettings()
@@ -546,7 +544,7 @@ public final class Agent {
         work.async {
             if !Agent.followUpReasons.contains(reason) {
                 self.autoRetries = 0
-                if reason != "periodic" { self.generation += 1 }
+                self.generation += 1
             }
             self.autoTimer?.cancel()
             let item = DispatchWorkItem { [weak self] in self?.runAuto(reason) }
@@ -560,7 +558,7 @@ public final class Agent {
 
     func runAuto(_ reason: String) {
         guard let engine = engine else { return }
-        let started = work.sync { () -> Int in lastAutoCheck = Date(); return generation }
+        let started = work.sync { generation }
         engine.handle("autoRun", nil) { [weak self] r in
             guard let self = self else { return }
             switch r {
@@ -624,9 +622,8 @@ public final class Agent {
         }
     }
 
-    /// On `work`. A failed run leaves its changes pending (completedGeneration stays behind).
+    /// On `work`. A run that failed for good waits for the next change; nothing rescans on a timer.
     func afterAuto(_ outcome: AutoOutcome, startedAt started: Int) {
-        if outcome == .done { completedGeneration = max(completedGeneration, started) }
         switch Agent.nextAuto(outcome, changedMeanwhile: generation != started, retries: autoRetries) {
         case .idle: break
         case .again: scheduleAuto("again")
@@ -645,14 +642,6 @@ public final class Agent {
     func settingsChanged() {
         scheduleAuto("settings")
         work.async { self.autoClean("settings") } // retention may have changed
-    }
-
-    func startPeriodic() {
-        let t = DispatchSource.makeTimerSource(queue: work)
-        t.schedule(deadline: .now() + 30, repeating: Agent.periodicInterval, leeway: .seconds(30))
-        t.setEventHandler { [weak self] in self?.periodicCheck() }
-        t.resume()
-        periodic = t
     }
 
     // MARK: maintenance, each on the event that makes it necessary (on `work`)
@@ -732,30 +721,16 @@ public final class Agent {
         work.asyncAfter(deadline: .now() + Agent.appGoneGrace, execute: check)
     }
 
-    /// Full scan only when something may have changed: an event since the last auto run,
-    /// a wake from sleep (the timer was late), or the long safety interval.
-    func periodicCheck() {
-        let now = Date()
-        let slept = now.timeIntervalSince(lastPeriodic) > Agent.periodicInterval * 2
-        lastPeriodic = now
-        if autoDirty || slept || now.timeIntervalSince(lastAutoCheck) > Agent.fullCheckInterval {
-            scheduleAuto("periodic")
-        }
-    }
-
     // MARK: Safari watcher
 
-    /// Safari is watched by events: the bookmarks file (FileWatcher) and Safari launching or
-    /// quitting (NSWorkspace). Both only prompt `tick`, which compares for itself; the slow
-    /// poll covers whatever the events miss.
-    static let watchFallback: TimeInterval = 30
+    /// Safari is watched by events only: the bookmarks file (FileWatcher), Safari launching
+    /// or quitting and the Mac waking (NSWorkspace). Each only prompts `tick`, which compares
+    /// for itself. Nothing polls.
     private var fileWatcher: FileWatcher?
+    private var safariWatched = false
     private var tickQueued = false
 
     func startWatcher() {
-        let w = FileWatcher(url: safari.url, queue: work) { [weak self] in self?.tickSoon() }
-        if !w.start() { Log.warn("cannot watch \(safari.url.deletingLastPathComponent().path); polling every \(Int(Agent.watchFallback))s") }
-        fileWatcher = w
         let nc = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             nc.addObserver(forName: name, object: nil, queue: nil) { [weak self] n in
@@ -763,11 +738,67 @@ public final class Agent {
                 if app?.bundleIdentifier == "com.apple.Safari" { self?.work.async { self?.tick() } }
             }
         }
+        // Asleep, nothing here changes; what changes after waking (iCloud, browser sync)
+        // arrives as events. One light look covers events lost around sleep: a stat, and a
+        // fingerprint only if the file changed. No full scan.
+        nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.work.async { self?.ensureSafariWatch(); self?.tick() }
+        }
+        work.async { self.ensureSafariWatch(); self.tick() } // the baseline later looks compare with
+    }
+
+    /// Starts watching Safari's folder unless it already is. Without Full Disk Access it
+    /// cannot be: tried again on wake and whenever a UI asks for status, which is what
+    /// happens when the user comes back to the app after granting access (on `work`).
+    func ensureSafariWatch() {
+        guard !safariWatched else { return }
+        let w = fileWatcher ?? FileWatcher(url: safari.url, queue: work) { [weak self] in self?.tickSoon() }
+        fileWatcher = w
+        safariWatched = w.start()
+        if safariWatched { Log.info("watching \(safari.url.path)"); tick() }
+        else { Log.warn("cannot watch \(safari.url.deletingLastPathComponent().path) (Full Disk Access?); will try again") }
+    }
+
+    /// Development check before trusting the events alone: with BMSYNC_SHADOW_POLL=1 the
+    /// agent also looks at Safari every 30 s and logs anything the events did not report.
+    /// It never syncs and never updates what `tick` compares with. Off: no timer at all.
+    static let shadowInterval: TimeInterval = 30
+    private var shadowLogged: String?
+
+    func startShadowPoll() {
+        guard ProcessInfo.processInfo.environment["BMSYNC_SHADOW_POLL"] == "1" else { return }
+        Log.info("shadow poll on: checking Safari every \(Int(Agent.shadowInterval)) s, logging only")
         let t = DispatchSource.makeTimerSource(queue: work)
-        t.schedule(deadline: .now() + 1, repeating: Agent.watchFallback, leeway: .seconds(5))
-        t.setEventHandler { [weak self] in self?.tick() }
+        t.schedule(deadline: .now() + Agent.shadowInterval, repeating: Agent.shadowInterval, leeway: .seconds(5))
+        t.setEventHandler { [weak self] in self?.shadowCheck() }
         t.resume()
-        timer = t
+        shadowTimer = t
+    }
+
+    /// Returns what was missed, if anything (on `work`).
+    @discardableResult
+    func shadowCheck() -> String? {
+        guard !tickQueued else { return nil } // an event is being handled right now
+        var missed: [String] = []
+        let running = SafariStore.safariRunning()
+        if let last = lastRunning, running != last { missed.append(running ? "Safari launched" : "Safari quit") }
+        let st = safari.stat()
+        let statChanged: Bool
+        switch (st, lastStat) {
+        case let (a?, b?): statChanged = a.mtime != b.mtime || a.size != b.size
+        case (nil, nil): statChanged = false
+        default: statChanged = true
+        }
+        if statChanged {
+            missed.append(safariTreeFingerprint() != lastTreeFP ? "a bookmarks change" : "a metadata-only rewrite")
+        }
+        guard !missed.isEmpty else { return nil }
+        let key = "\(missed) \(st?.mtime ?? 0) \(st?.size ?? 0)"
+        guard key != shadowLogged else { return nil } // once per miss
+        shadowLogged = key
+        let what = missed.joined(separator: ", ")
+        Log.warn("shadow: missed \(what) (watched=\(safariWatched))")
+        return what
     }
 
     /// A save is several file events in a row; look once they settle (on `work`).

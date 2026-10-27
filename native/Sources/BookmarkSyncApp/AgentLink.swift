@@ -38,6 +38,11 @@ final class AgentLink: ObservableObject {
     private var socketWatcher: FileWatcher?
     /// One-shot waits after failed attempts; after the last one, only events reconnect.
     private static let retrySteps: [Double] = [1, 3, 10, 30, 60, 60, 60, 60]
+    /// The socket file appears at bind(), a moment before the agent listens: a connect
+    /// refused right after the socket event is tried again a few times (about 3 s in all).
+    /// These do not count as failures, so the socket appearing always reconnects.
+    private static let settleWaits: [Double] = [0.05, 0.1, 0.2, 0.4, 0.8, 1.6]
+    private var settling = false
     private struct EventSink {
         weak var owner: AnyObject?
         let fn: ([String: Any]) -> Void
@@ -56,7 +61,7 @@ final class AgentLink: ObservableObject {
     func start() {
         try? Paths.ensureDir(Paths.support)
         let w = FileWatcher(url: Paths.socket, queue: DispatchQueue(label: "bmsync.app.socket-watch")) { [weak self] in
-            Task { @MainActor in self?.connect() }
+            Task { @MainActor in self?.socketAppeared() }
         }
         if !w.start() { Log.warn("cannot watch \(Paths.support.path); reconnecting on retries only") }
         socketWatcher = w
@@ -82,7 +87,32 @@ final class AgentLink: ObservableObject {
     private func finishConnect(_ c: Int32?) {
         connecting = false
         guard let c = c else { retryLater(); return }
+        attach(c)
+    }
+
+    /// The agent (re)bound its socket, or something else changed in its folder.
+    private func socketAppeared(attempt n: Int = 0) {
+        guard !connected else { settling = false; return }
+        if n == 0 { guard !settling else { return }; settling = true }
+        Task.detached(priority: .utility) { [weak self] in
+            let c = connectUnix(Paths.socket.path)
+            await self?.finishSettle(c, attempt: n)
+        }
+    }
+
+    private func finishSettle(_ c: Int32?, attempt n: Int) {
+        if let c = c { settling = false; attach(c); return }
+        guard n < AgentLink.settleWaits.count, !connected else { settling = false; return }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(AgentLink.settleWaits[n] * 1_000_000_000))
+            self?.socketAppeared(attempt: n + 1)
+        }
+    }
+
+    private func attach(_ c: Int32) {
         if connected { close(c); return }
+        retryTask?.cancel()
+        retryTask = nil
         fd = c
         connected = true
         connectedAt = Date()

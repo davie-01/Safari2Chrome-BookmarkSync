@@ -520,7 +520,32 @@ Chrome 书签事件 ─────┤
 | 临时 Agent 2 秒父进程检查 | 已移除 | 改为检测 stdin 管道 EOF；stdin 不是 App 的管道时，退回到 `DispatchSourceProcess` 监听父进程退出 |
 | Agent 每日空定时器 | 已移除 | 改用 `NSMachPort` 保持主 RunLoop 运行 |
 | 扩展每分钟 alarm | 已移除 | 由 Native Host（`AgentUpstream`）负责重连 Agent，并发送 `agent.available`；扩展只在 Host 本身不可达时退避：3 秒和 10 秒用定时器，30 秒起用一次性 alarm，8 次后停止。`background.test.js` 与 `AgentUpstreamTests` 覆盖这些行为 |
-| Agent 15 分钟维护 | 已拆分 | 清单刷新：Agent 启动时，以及 Chromium 系浏览器启动时（按 bundle id 识别，10 秒后补一次，因为首次启动时数据目录可能还未创建）。清理：Agent 启动时、Safari 写入并生成备份后、修改设置后。日志：写入时超过 2MB 即轮转（`LogTests`）。自清理：监听 App 包本身，消失后进入 15 分钟宽限期，期间重新出现即取消。这个定时器现在只剩同步兜底检查（`periodicCheck`），待第四阶段移除 |
-| Agent 30 秒 Safari 兜底 | 待第四阶段 | |
+| Agent 15 分钟维护 | 已拆分 | 清单刷新：Agent 启动时，以及 Chromium 系浏览器启动时（按 bundle id 识别，10 秒后补一次，因为首次启动时数据目录可能还未创建）。清理：Agent 启动时、Safari 写入并生成备份后、修改设置后。日志：写入时超过 2MB 即轮转（`LogTests`）。自清理：监听 App 包本身，消失后进入 15 分钟宽限期，期间重新出现即取消。随后在第四阶段删除了该定时器 |
+| Agent 15 分钟同步兜底与 6 小时完整扫描 | 已移除 | 完整扫描只由事件触发：Agent 启动、Safari 文件变化、Safari 退出、Chrome 书签事件、端点上线、设置变化，以及失败后的一次性退避重试。永久性失败会等待下一个事件，不再定时重扫 |
+| Agent 30 秒 Safari 兜底 | 已移除 | 改为：文件事件；Safari 启动与退出通知；系统唤醒后一次轻量检查（stat，文件变化时再计算指纹，不读取各端书签树）。文件监听建立失败（通常是没有完全磁盘访问权限）时，在唤醒和任何界面请求状态时重试。`AgentWatchTests` 覆盖仅凭文件事件发现变化、忽略元数据重写 |
 
-实施中新发现的问题：Agent 先 `bind()` 后 `listen()`，socket 文件出现时还不能连接。Host 在 socket 事件之后的连接若被拒绝，会在约 3 秒内补试几次（50 毫秒起翻倍）。App 端由一次性退避兜底。
+实施中新发现的问题：Agent 先 `bind()` 后 `listen()`，socket 文件出现时还不能连接。Host 和 App 在 socket 事件之后的连接若被拒绝，都会在约 3 秒内补试几次（50 毫秒起翻倍）。这组补试不计入 App 的退避次数，因此即使退避次数已经用完，socket 出现时也一定会重连。
+
+**现状**：稳定状态下，App、临时 Agent、常驻 Agent、Native Host 和扩展均不存在固定周期唤醒。代码中唯一的重复定时器是影子验证，默认不启动。
+
+### 14.6 影子验证
+
+用于确认文件事件和系统通知没有漏报。只记录日志，不触发同步，也不改变正常检查所比较的基线。
+
+```bash
+launchctl setenv BMSYNC_SHADOW_POLL 1
+launchctl kickstart -k gui/$(id -u)/com.mars.davie-01.BookmarkSync.sync
+```
+
+开启后，Agent 每 30 秒检查一次 Safari 的运行状态和书签文件，在 `~/Library/Logs/BookmarkSync/agent.log` 中把事件没有报告的变化记录为 `shadow: missed …`（同一次漏报只记录一次）：
+
+- `a bookmarks change`：书签变化被漏掉，需要排查。
+- `a metadata-only rewrite`：只是元数据重写被漏掉，不影响同步，只用于了解监听覆盖情况。
+- `Safari launched` / `Safari quit`：启动或退出通知被漏掉。
+
+建议覆盖：Safari 编辑、iCloud 同步、睡眠唤醒、浏览器重启。验证结束后关闭：
+
+```bash
+launchctl unsetenv BMSYNC_SHADOW_POLL
+launchctl kickstart -k gui/$(id -u)/com.mars.davie-01.BookmarkSync.sync
+```
