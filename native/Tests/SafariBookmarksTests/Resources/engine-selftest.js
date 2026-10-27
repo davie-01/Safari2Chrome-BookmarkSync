@@ -278,23 +278,29 @@
   }
   var other = (side) => side === "s" ? "c" : "s";
   function lcsSet(a, b) {
-    const n = a.length, m = b.length;
-    const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-    for (let i2 = n - 1; i2 >= 0; i2--) {
-      for (let j2 = m - 1; j2 >= 0; j2--) {
-        dp[i2][j2] = a[i2] === b[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+    const posInB = new Map(b.map((k, j) => [k, j]));
+    const keys = [], pos = [];
+    for (const k of a) {
+      const j = posInB.get(k);
+      if (j !== void 0) {
+        keys.push(k);
+        pos.push(j);
       }
     }
-    const out = /* @__PURE__ */ new Set();
-    let i = 0, j = 0;
-    while (i < n && j < m) {
-      if (a[i] === b[j]) {
-        out.add(a[i]);
-        i++;
-        j++;
-      } else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
-      else j++;
+    const tails = [];
+    const prev = new Int32Array(pos.length);
+    for (let i = 0; i < pos.length; i++) {
+      let lo = 0, hi = tails.length;
+      while (lo < hi) {
+        const mid = lo + hi >> 1;
+        if (pos[tails[mid]] < pos[i]) lo = mid + 1;
+        else hi = mid;
+      }
+      prev[i] = lo > 0 ? tails[lo - 1] : -1;
+      tails[lo] = i;
     }
+    const out = /* @__PURE__ */ new Set();
+    for (let i = tails.length ? tails[tails.length - 1] : -1; i >= 0; i = prev[i]) out.add(keys[i]);
     return out;
   }
   function sameOrder(a, b) {
@@ -509,8 +515,39 @@
       }
       return d;
     };
+    let baseKids = null;
+    const kidsInBase = (key) => {
+      if (!baseKids) {
+        baseKids = /* @__PURE__ */ new Map();
+        for (const [k, n] of Object.entries(baseNodes)) {
+          if (!baseKids.has(n.parent)) baseKids.set(n.parent, []);
+          baseKids.get(n.parent).push(k);
+        }
+      }
+      return baseKids.get(key) || [];
+    };
+    const bucket = (m, k, id) => {
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(id);
+    };
     for (const side of ["s", "c"]) {
       const missing = Object.keys(mappings).filter((k) => mappings[k][side] != null && !idOf[side].has(k) && baseNodes[k]).sort((a, b) => depthOfBase(a) - depthOfBase(b));
+      if (!missing.length) continue;
+      const bmByTitleUrl = /* @__PURE__ */ new Map(), folderByTitle = /* @__PURE__ */ new Map();
+      for (const [id, rec2] of idx[side].byId) {
+        if (rec2.kind === "bookmark") bucket(bmByTitleUrl, `${rec2.title}\0${rec2.curl}`, id);
+        else if (rec2.kind === "folder") bucket(folderByTitle, rec2.title, id);
+      }
+      const candidateIds = (key, b) => {
+        if (b.kind === "bookmark") return bmByTitleUrl.get(`${b.title}\0${b.url}`) || [];
+        const out = new Set(folderByTitle.get(b.title) || []);
+        for (const k of kidsInBase(key)) {
+          const id = idOf[side].get(k);
+          const p = id != null ? idx[side].byId.get(id)?.parentId : null;
+          if (p != null) out.add(p);
+        }
+        return out;
+      };
       let progress = true;
       let remaining = missing;
       for (let pass = 0; pass < 3 && progress && remaining.length; pass++) {
@@ -519,7 +556,8 @@
         for (const key of remaining) {
           const b = baseNodes[key];
           const cands = [];
-          for (const [id, rec2] of idx[side].byId) {
+          for (const id of candidateIds(key, b)) {
+            const rec2 = idx[side].byId.get(id);
             if (keyOf[side].has(id) || rec2.kind !== b.kind) continue;
             const pk = rec2.parentId ? keyOf[side].get(rec2.parentId) : void 0;
             if (b.kind === "bookmark") {
@@ -566,18 +604,18 @@
         (r) => r.kind === "bookmark" ? `u\0${r.curl}` : null
       ];
       for (const sig of passes2) {
-        const bucket = /* @__PURE__ */ new Map();
+        const bucket2 = /* @__PURE__ */ new Map();
         for (const cid of cUn) {
           const k = sig(idx.c.byId.get(cid));
           if (k == null) continue;
-          if (!bucket.has(k)) bucket.set(k, []);
-          bucket.get(k).push(cid);
+          if (!bucket2.has(k)) bucket2.set(k, []);
+          bucket2.get(k).push(cid);
         }
         const usedC = /* @__PURE__ */ new Set();
         const restS = [];
         for (const sid of sUn) {
           const k = sig(idx.s.byId.get(sid));
-          const list = k == null ? null : bucket.get(k);
+          const list = k == null ? null : bucket2.get(k);
           if (list && list.length) {
             const cid = list.shift();
             usedC.add(cid);
@@ -770,8 +808,10 @@
       if (sameOrder(sOrd, cOrd)) continue;
       const bOrd = (baseOrders[F] || []).filter((k) => common.has(k));
       const moved = (list) => {
-        const b = bOrd.filter((k) => list.includes(k));
-        const l = list.filter((k) => b.includes(k));
+        const inList = new Set(list);
+        const b = bOrd.filter((k) => inList.has(k));
+        const inB = new Set(b);
+        const l = list.filter((k) => inB.has(k));
         return b.length < 2 ? null : l.length - lcsSet(l, b).size;
       };
       const mS = moved(sOrd), mC = moved(cOrd);
@@ -1804,7 +1844,7 @@
         else if (x.type === "order" && !x.suspicious && x.default !== "ignore") c = x.default;
         choices[x.id] = c;
       }
-      const pv = this.preview(scan.scanId, choices);
+      const pv = scan.items.length ? this.preview(scan.scanId, choices) : scan;
       const writes = Object.values(pv.preview).reduce((a, v) => a + (v.total || 0), 0);
       const heldDeletes = deletes.length && !allowDeletes ? delNodes : 0;
       if (!writes) {

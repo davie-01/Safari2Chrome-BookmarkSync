@@ -69,10 +69,17 @@ public enum NativeHost {
         return (s?.isEmpty ?? true) ? nil : s
     }
 
+    /// When the agent keeps failing to start, every message would otherwise spawn launchctl again.
+    private static var lastKickstart: Date?
+
     static func connectWithRetry() -> Int32? {
         for attempt in 0..<15 {
             if let fd = connectUnix(Paths.socket.path) { return fd }
-            if attempt == 0 { kickstartAgent() }
+            if attempt == 0 {
+                guard lastKickstart.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return nil }
+                lastKickstart = Date()
+                kickstartAgent()
+            }
             usleep(200_000)
         }
         return nil

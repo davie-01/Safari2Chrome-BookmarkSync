@@ -52,10 +52,41 @@ export function computeDiff(state, sTree, cTree, opts = {}) {
     }
     return d;
   };
+  // Candidate lookup by the evidence's static parts, so a mass id rebuild is not O(n²):
+  // a bookmark must match title + url; a folder must match the title or be the current
+  // parent of a bound node whose agreed parent is the key. The full test still runs below.
+  let baseKids = null;
+  const kidsInBase = (key) => {
+    if (!baseKids) {
+      baseKids = new Map();
+      for (const [k, n] of Object.entries(baseNodes)) {
+        if (!baseKids.has(n.parent)) baseKids.set(n.parent, []);
+        baseKids.get(n.parent).push(k);
+      }
+    }
+    return baseKids.get(key) || [];
+  };
+  const bucket = (m, k, id) => { if (!m.has(k)) m.set(k, []); m.get(k).push(id); };
   for (const side of ['s', 'c']) {
     const missing = Object.keys(mappings)
       .filter((k) => mappings[k][side] != null && !idOf[side].has(k) && baseNodes[k])
       .sort((a, b) => depthOfBase(a) - depthOfBase(b));
+    if (!missing.length) continue;
+    const bmByTitleUrl = new Map(), folderByTitle = new Map();
+    for (const [id, rec] of idx[side].byId) {
+      if (rec.kind === 'bookmark') bucket(bmByTitleUrl, `${rec.title}\u0000${rec.curl}`, id);
+      else if (rec.kind === 'folder') bucket(folderByTitle, rec.title, id);
+    }
+    const candidateIds = (key, b) => {
+      if (b.kind === 'bookmark') return bmByTitleUrl.get(`${b.title}\u0000${b.url}`) || [];
+      const out = new Set(folderByTitle.get(b.title) || []);
+      for (const k of kidsInBase(key)) {
+        const id = idOf[side].get(k);
+        const p = id != null ? idx[side].byId.get(id)?.parentId : null;
+        if (p != null) out.add(p);
+      }
+      return out;
+    };
     let progress = true;
     let remaining = missing;
     for (let pass = 0; pass < 3 && progress && remaining.length; pass++) {
@@ -64,7 +95,8 @@ export function computeDiff(state, sTree, cTree, opts = {}) {
       for (const key of remaining) {
         const b = baseNodes[key];
         const cands = [];
-        for (const [id, rec] of idx[side].byId) {
+        for (const id of candidateIds(key, b)) {
+          const rec = idx[side].byId.get(id);
           if (keyOf[side].has(id) || rec.kind !== b.kind) continue;
           const pk = rec.parentId ? keyOf[side].get(rec.parentId) : undefined;
           if (b.kind === 'bookmark') {
@@ -311,8 +343,10 @@ export function computeDiff(state, sTree, cTree, opts = {}) {
     if (sameOrder(sOrd, cOrd)) continue;
     const bOrd = (baseOrders[F] || []).filter((k) => common.has(k));
     const moved = (list) => {
-      const b = bOrd.filter((k) => list.includes(k));
-      const l = list.filter((k) => b.includes(k));
+      const inList = new Set(list);
+      const b = bOrd.filter((k) => inList.has(k));
+      const inB = new Set(b);
+      const l = list.filter((k) => inB.has(k));
       return b.length < 2 ? null : l.length - lcsSet(l, b).size;
     };
     const mS = moved(sOrd), mC = moved(cOrd);

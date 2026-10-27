@@ -29,22 +29,32 @@ export function newSafariUUID() {
 export const other = (side) => (side === 's' ? 'c' : 's');
 export const sideName = (side) => (side === 's' ? 'Safari' : 'Chrome');
 
-/** Longest common subsequence of two key arrays; returns a Set of keys in the LCS (keys are unique). */
+/**
+ * Longest common subsequence of two key arrays; returns a Set of keys in the LCS.
+ * Keys are unique within each array, so the LCS is the longest increasing run of the
+ * b-positions of a's keys: O(n log n) time and O(n) memory, even for huge folders.
+ */
 export function lcsSet(a, b) {
-  const n = a.length, m = b.length;
-  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const posInB = new Map(b.map((k, j) => [k, j]));
+  const keys = [], pos = [];
+  for (const k of a) {
+    const j = posInB.get(k);
+    if (j !== undefined) { keys.push(k); pos.push(j); }
+  }
+  // tails[l] = index (into pos) of the smallest tail of an increasing run of length l + 1
+  const tails = [];
+  const prev = new Int32Array(pos.length);
+  for (let i = 0; i < pos.length; i++) {
+    let lo = 0, hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pos[tails[mid]] < pos[i]) lo = mid + 1; else hi = mid;
     }
+    prev[i] = lo > 0 ? tails[lo - 1] : -1;
+    tails[lo] = i;
   }
   const out = new Set();
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.add(a[i]); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
-    else j++;
-  }
+  for (let i = tails.length ? tails[tails.length - 1] : -1; i >= 0; i = prev[i]) out.add(keys[i]);
   return out;
 }
 

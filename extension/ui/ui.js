@@ -366,20 +366,38 @@ function bulk(items, mode) {
 // ---- plan preview / run ---------------------------------------------------------------
 
 let previewTimer = null;
+let previewRun = null; // the preview request in flight, if any
+let previewDirty = false;
 function updatePreview() {
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(async () => {
-    if (!ui.scan) return;
-    try {
-      const p = await call('preview', { scanId: ui.scan.scanId, choices: ui.choices });
-      // the decision list can change with choices (e.g. an ignored new folder on one browser)
-      const ids = (x) => x.map((i) => i.id).join('\n');
-      if (ids(p.items) !== ids(ui.scan.items)) { ui.scan = { ...ui.scan, items: p.items }; renderList(); }
-      renderPlan(p.preview);
-    } catch (e) {
-      $('#plan').textContent = e.message;
-    }
-  }, 150);
+  previewTimer = setTimeout(flushPreview, 150);
+}
+
+/** One preview at a time; choices changed meanwhile are folded into one more round. Resolves when the preview is current. */
+function flushPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = null;
+  if (previewRun) { previewDirty = true; return previewRun; }
+  previewRun = (async () => {
+    do {
+      previewDirty = false;
+      await refreshPreview();
+    } while (previewDirty);
+  })().finally(() => { previewRun = null; });
+  return previewRun;
+}
+
+async function refreshPreview() {
+  if (!ui.scan) return;
+  try {
+    const p = await call('preview', { scanId: ui.scan.scanId, choices: ui.choices });
+    // the decision list can change with choices (e.g. an ignored new folder on one browser)
+    const ids = (x) => x.map((i) => i.id).join('\n');
+    if (ids(p.items) !== ids(ui.scan.items)) { ui.scan = { ...ui.scan, items: p.items }; renderList(); }
+    renderPlan(p.preview);
+  } catch (e) {
+    $('#plan').textContent = e.message;
+  }
 }
 
 function sideSummary(name, s) {
@@ -407,6 +425,11 @@ function renderPlan(preview) {
 }
 
 async function doRun() {
+  // the delete confirmation must see the plan for the latest choices
+  if (previewTimer || previewRun) {
+    await flushPreview();
+    if ($('#btn-run').disabled) return; // nothing left to write with these choices
+  }
   const p = ui.preview || {};
   const removes = (ui.scan?.endpoints || []).map((e) => [e.name, p[e.id]?.remove || 0]).filter(([, n]) => n);
   if (removes.length) {

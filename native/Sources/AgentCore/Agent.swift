@@ -36,6 +36,9 @@ public final class Agent {
     private var lastRunning: Bool?
     private var engine: EngineHost?
     private var autoTimer: DispatchWorkItem?
+    /// Consecutive auto-sync retries after busy / changedSinceScan (only touched on `work`).
+    private var autoRetries = 0
+    static let maxAutoRetries = 5
     private var periodic: DispatchSourceTimer?
     private var kv: [String: Any] = [:]
 
@@ -217,7 +220,7 @@ public final class Agent {
 
     func handleEvent(_ conn: Conn, _ ev: String, _ msg: [String: Any]) {
         switch ev {
-        case "bookmarks.changed": scheduleAuto("\(conn.endpoint?["id"] as? String ?? "?"):changed")
+        case "bookmarks.changed": scheduleAuto("\(conn.endpoint?["id"] as? String ?? "?"):changed", bookmarksChanged: true)
         default: break
         }
     }
@@ -495,15 +498,18 @@ public final class Agent {
         return (s["autoSync"] as? Bool ?? false, max(2, s["autoDelay"] as? Double ?? 5))
     }
 
-    func scheduleAuto(_ reason: String) {
-        broadcast(["event": "changed", "reason": reason])
+    /// `bookmarksChanged`: tell the UIs their scan is stale. Periodic checks, settings
+    /// changes and retries are not bookmark changes and must not say so.
+    func scheduleAuto(_ reason: String, bookmarksChanged: Bool = false, extraDelay: Double = 0) {
+        if bookmarksChanged { broadcast(["event": "changed", "reason": reason]) }
         let (on, delay) = autoSettings()
         guard on, engine != nil else { return }
         work.async {
+            if reason != "retry" { self.autoRetries = 0 }
             self.autoTimer?.cancel()
             let item = DispatchWorkItem { [weak self] in self?.runAuto(reason) }
             self.autoTimer = item
-            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: item)
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay + extraDelay, execute: item)
         }
     }
 
@@ -516,14 +522,27 @@ public final class Agent {
                 self?.broadcast(["event": "autoRun", "result": v ?? NSNull()])
             case .failure(let e):
                 if e.code != "busy" { Log.warn("auto sync failed (\(reason)): \(e.code) \(e.message)") }
-                if e.code == "changedSinceScan" || e.code == "busy" { self?.scheduleAuto("retry") }
+                if e.code == "changedSinceScan" || e.code == "busy" { self?.retryAuto() }
             }
             self?.afterRun()
         }
     }
 
+    /// Bookmarks still moving (or a manual run in progress): try again later, backing off,
+    /// and give up after a few attempts; the next real change schedules a fresh run.
+    func retryAuto() {
+        work.async {
+            guard self.autoRetries < Agent.maxAutoRetries else {
+                Log.warn("auto sync: giving up after \(self.autoRetries) retries")
+                return
+            }
+            self.autoRetries += 1
+            self.scheduleAuto("retry", extraDelay: 5 * pow(2, Double(self.autoRetries - 1)))
+        }
+    }
+
     func afterRun() {
-        broadcast(["event": "pending", "pending": kv["pending"] ?? NSNull()])
+        work.async { self.broadcast(["event": "pending", "pending": self.kv["pending"] ?? NSNull()]) }
     }
 
     func settingsChanged() {
@@ -602,7 +621,7 @@ public final class Agent {
         if changed {
             if lastStat != nil || st == nil {
                 broadcast(["event": "safari.changed", "mtime": st?.mtime ?? 0])
-                scheduleAuto("safari.changed")
+                scheduleAuto("safari.changed", bookmarksChanged: true)
             }
             lastStat = st
         }

@@ -256,7 +256,8 @@ export class Coordinator {
       else if (x.type === 'order' && !x.suspicious && x.default !== 'ignore') c = x.default;
       choices[x.id] = c;
     }
-    const pv = this.preview(scan.scanId, choices);
+    // No decisions -> no choices -> the scan already computed exactly this plan.
+    const pv = scan.items.length ? this.preview(scan.scanId, choices) : scan;
     const writes = Object.values(pv.preview).reduce((a, v) => a + (v.total || 0), 0);
     const heldDeletes = deletes.length && !allowDeletes ? delNodes : 0;
     if (!writes) {

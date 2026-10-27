@@ -404,3 +404,27 @@ test('orderMaster s makes Safari win when unclear', async () => {
   const d = computeDiff(e.state, e.safari.tree(), c.tree, { orderMaster: 's' });
   assert.equal(d.items.find((i) => i.type === 'order').default, 'useS');
 });
+
+test('lcsSet: optimal on random permutations and subsets; linear memory on huge folders', () => {
+  // reference: classic DP length
+  const lcsLen = (a, b) => {
+    const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+    return dp[0][0];
+  };
+  let s = 11;
+  const r = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (let t = 0; t < 500; t++) {
+    const pool = Array.from({ length: 5 + Math.floor(r() * 30) }, (_, i) => `k${i}`);
+    const a = pool.filter(() => r() < 0.8).sort(() => r() - 0.5);
+    const b = pool.filter(() => r() < 0.8).sort(() => r() - 0.5);
+    const got = lcsSet(a, b);
+    assert.equal(got.size, lcsLen(a, b));
+    assert.deepEqual(a.filter((k) => got.has(k)), b.filter((k) => got.has(k)));
+  }
+  const big = Array.from({ length: 50000 }, (_, i) => `k${i}`);
+  const moved = [...big.slice(1, 25000), big[0], ...big.slice(25000)];
+  assert.equal(lcsSet(big, moved).size, 49999);
+});

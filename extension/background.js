@@ -42,10 +42,12 @@ async function announce() {
       endpoint: { id: await endpointId(), browser: browserFromUA(), ua: navigator.userAgent, extVersion: chrome.runtime.getManifest().version },
     }, { timeoutMs: 15000 });
     announced = r.endpoint;
+    reconnect.reset();
     await local.set('endpoint', r.endpoint);
   } catch (e) {
     announced = null;
     console.warn('endpoint.hello failed', e);
+    reconnect.schedule();
   }
 }
 agent.onConnect(() => { announce(); });
@@ -171,7 +173,7 @@ agent.onEvent((ev) => {
   if (ev.event === 'agent.disconnected') {
     announced = null;
     toUI(ev);
-    setTimeout(() => { try { agent.connect(); } catch { /* retry on alarm */ } }, 3000);
+    reconnect.schedule();
     return;
   }
   if (ev.event === 'pending') refreshBadge(ev.pending);
@@ -192,12 +194,37 @@ chrome.action.onClicked.addListener(async () => {
 
 // ---- keep the endpoint online ------------------------------------------------------
 
-// An open native messaging port keeps the MV3 service worker alive; the alarm reconnects
-// after the agent restarts or the browser suspended us.
+// One pending reconnect at a time, backing off while the host or the agent stays down
+// (not installed, broken manifest, agent failing to start), reset once announced.
+const reconnect = {
+  steps: [3, 10, 30, 60, 300], // seconds
+  failures: 0,
+  timer: null,
+  schedule() {
+    if (this.timer) return;
+    const s = this.steps[Math.min(this.failures, this.steps.length - 1)];
+    this.failures++;
+    this.timer = setTimeout(() => { this.timer = null; ensureOnline(); }, s * 1000);
+  },
+  reset() {
+    this.failures = 0;
+    clearTimeout(this.timer);
+    this.timer = null;
+  },
+};
+
+async function ensureOnline() {
+  if (agent.connected && announced) return;
+  if (agent.connected) { await announce(); return; }
+  try { agent.connect(); } catch { reconnect.schedule(); } // a new port announces itself (onConnect)
+}
+
+// An open native messaging port keeps the MV3 service worker alive; the alarm brings the
+// endpoint back after the browser suspended us. A pending backoff is left alone.
 chrome.alarms.create('keepalive', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(async (a) => {
-  if (a.name !== 'keepalive') return;
-  if (!agent.connected || !announced) { try { agent.connect(); if (!announced) await announce(); } catch { /* agent down */ } }
+  if (a.name !== 'keepalive' || reconnect.timer) return;
+  await ensureOnline();
 });
 
 async function refreshBadge(pending) {
