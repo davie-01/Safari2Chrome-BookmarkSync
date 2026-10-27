@@ -50,6 +50,30 @@ final class FileWatcherTests: XCTestCase {
         w.stop()
     }
 
+    /// The app and the native host watch for the agent's socket: binding one is a folder event.
+    func testSocketAppearing() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fw\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("agent.sock").path
+        let lock = NSLock()
+        var n = 0
+        let w = FileWatcher(url: URL(fileURLWithPath: path), queue: DispatchQueue(label: "fw.sock")) { lock.lock(); n += 1; lock.unlock() }
+        XCTAssertTrue(w.start())
+        let hits = { () -> Int in lock.lock(); defer { lock.unlock() }; return n }
+        for _ in 0..<2 { // first start, then a restart that unlinks and binds again
+            try expectChange(hits) {
+                unlink(path)
+                var addr = try unixAddress(path)
+                let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+                let r = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+                XCTAssertEqual(r, 0)
+                close(fd)
+            }
+        }
+        w.stop()
+    }
+
     func testUnwatchableFolder() {
         let w = FileWatcher(url: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/Bookmarks.plist"),
                             queue: DispatchQueue(label: "fw.test2")) {}

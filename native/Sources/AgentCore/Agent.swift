@@ -98,7 +98,8 @@ public final class Agent {
         Installer.refreshNativeHostManifests()
         Thread.detachNewThread { [self] in acceptLoop(fd) }
         // The main thread runs the run loop: NSWorkspace delivers Safari launch/quit there.
-        _ = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in } // keeps run() from returning
+        // A port with nothing on it keeps run() from returning without ever waking it.
+        RunLoop.main.add(NSMachPort(), forMode: .default)
         RunLoop.main.run()
         fatalError("main run loop exited")
     }
@@ -131,17 +132,28 @@ public final class Agent {
     }
 
     /// Temporary agents started by the app must not outlive it, even if the app is killed
-    /// without a chance to clean up: once our parent is gone, getppid() is 1.
+    /// without a chance to clean up. The app holds the write end of our stdin: the kernel
+    /// closes it when the app goes, however it goes, and our read sees end of file.
+    private var parentExit: DispatchSourceProcess?
+
     func startParentWatch() {
-        Thread.detachNewThread {
-            while true {
-                Thread.sleep(forTimeInterval: 2)
-                if getppid() == 1 {
-                    Log.info("parent app exited; temporary agent stopping")
-                    exit(0)
-                }
-            }
+        Thread.detachNewThread { [self] in
+            var b: UInt8 = 0
+            while read(STDIN_FILENO, &b, 1) > 0 {} // the app never writes; this waits for EOF
+            let parent = getppid()
+            if parent == 1 { parentGone() }
+            // stdin was not the app's pipe (started by hand, or /dev/null): watch the parent itself
+            let src = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit, queue: work)
+            src.setEventHandler { [weak self] in self?.parentGone() }
+            src.resume()
+            work.async { self.parentExit = src }
+            if getppid() != parent { parentGone() } // it left while we were registering
         }
+    }
+
+    private func parentGone() -> Never {
+        Log.info("parent app exited; temporary agent stopping")
+        exit(0)
     }
 
     func listen() throws -> Int32 {

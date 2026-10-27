@@ -10,6 +10,9 @@ import AgentCore
 final class AgentSupervisor {
     static let shared = AgentSupervisor()
     private var child: Process?
+    /// Write end of the temporary agent's stdin, never written: when this process ends the
+    /// kernel closes it and the agent sees end of file and exits (no polling on either side).
+    private var lifeline: Pipe?
     private let lock = NSLock()
 
     var temporaryRunning: Bool {
@@ -17,14 +20,18 @@ final class AgentSupervisor {
         return child?.isRunning ?? false
     }
 
-    /// Starts a temporary agent unless one is already reachable.
+    /// Starts a temporary agent unless one is already reachable. Blocks (launchctl, a short
+    /// wait for the resident one): call it off the main thread.
     private var kickstarted = false
 
     func ensureRunning() {
         if agentReachable() { return }
-        if Installer.residentEnabled && !kickstarted {
+        lock.lock()
+        let nudge = Installer.residentEnabled && !kickstarted
+        kickstarted = true
+        lock.unlock()
+        if nudge {
             // launchd owns it; nudge it once (an upgrade can leave a stale service record).
-            kickstarted = true
             Installer.kickstartResident()
             Thread.sleep(forTimeInterval: 1.0)
             if agentReachable() { return }
@@ -48,23 +55,26 @@ final class AgentSupervisor {
         p.arguments = ["agent", "--exit-with-parent"]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
+        let pipe = Pipe()
+        p.standardInput = pipe
         do {
             try p.run()
             child = p
+            lifeline = pipe
             lock.unlock()
             Log.info("app started a temporary agent pid=\(p.processIdentifier)")
         } catch {
             lock.unlock()
             Log.warn("cannot start temporary agent: \(error.localizedDescription)")
         }
-        // give it time to bind the socket before the first connect attempt
-        Thread.sleep(forTimeInterval: 0.4)
+        // no wait here: the app connects when the agent's socket appears
     }
 
     func stopTemporary() {
         lock.lock()
         let p = child
         child = nil
+        lifeline = nil
         lock.unlock()
         guard let p = p, p.isRunning else { return }
         p.terminate()

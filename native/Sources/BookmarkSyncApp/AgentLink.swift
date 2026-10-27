@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import AgentCore
 
 /// The app's connection to the sync agent: one Unix-socket connection, newline-delimited
@@ -31,7 +31,13 @@ final class AgentLink: ObservableObject {
     private var pendingCalls: [Int: (Result<Any?, AgentError>) -> Void] = [:]
     /// Writes only; the read loop gets a thread of its own so it cannot block them.
     private let io = DispatchQueue(label: "bmsync.app.link.write")
-    private var reconnectTimer: Timer?
+    private var connecting = false
+    private var connectedAt = Date.distantPast
+    private var failures = 0
+    private var retryTask: Task<Void, Never>?
+    private var socketWatcher: FileWatcher?
+    /// One-shot waits after failed attempts; after the last one, only events reconnect.
+    private static let retrySteps: [Double] = [1, 3, 10, 30, 60, 60, 60, 60]
     private struct EventSink {
         weak var owner: AnyObject?
         let fn: ([String: Any]) -> Void
@@ -42,23 +48,44 @@ final class AgentLink: ObservableObject {
     var endpoints: [EndpointInfo] { status?.endpoints ?? [] }
 
     // MARK: connection
+    //
+    // Event-driven: an attempt is made at start, when the connection drops, when the agent's
+    // socket appears (it binds a fresh one on every start), when the app becomes active, and
+    // once after each failed attempt with a growing wait. Nothing runs while connected.
 
     func start() {
-        connect()
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                if !self.connected { self.connect() }
-            }
+        try? Paths.ensureDir(Paths.support)
+        let w = FileWatcher(url: Paths.socket, queue: DispatchQueue(label: "bmsync.app.socket-watch")) { [weak self] in
+            Task { @MainActor in self?.connect() }
         }
+        if !w.start() { Log.warn("cannot watch \(Paths.support.path); reconnecting on retries only") }
+        socketWatcher = w
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.connect() }
+        }
+        connect()
     }
 
     func connect() {
-        guard !connected else { return }
-        AgentSupervisor.shared.ensureRunning()
-        guard let c = connectUnix(Paths.socket.path) else { return }
+        guard !connected, !connecting else { return }
+        connecting = true
+        retryTask?.cancel()
+        retryTask = nil
+        Task.detached(priority: .utility) { [weak self] in
+            // may start or nudge the agent and wait for it: never on the main thread
+            AgentSupervisor.shared.ensureRunning()
+            let c = connectUnix(Paths.socket.path)
+            await self?.finishConnect(c)
+        }
+    }
+
+    private func finishConnect(_ c: Int32?) {
+        connecting = false
+        guard let c = c else { retryLater(); return }
+        if connected { close(c); return }
         fd = c
         connected = true
+        connectedAt = Date()
         lastError = nil
         Thread.detachNewThread { [weak self] in
             let reader = LineReader(fd: c)
@@ -66,12 +93,28 @@ final class AgentLink: ObservableObject {
                 guard let msg = try? JSON.object(line) else { continue }
                 Task { @MainActor in self?.receive(msg) }
             }
-            Task { @MainActor in self?.dropped() }
+            Task { @MainActor in self?.dropped(c) }
         }
         refresh()
     }
 
-    private func dropped() {
+    private func retryLater() {
+        guard failures < AgentLink.retrySteps.count else {
+            lastError = t("后台服务无法启动；打开主窗口或重启后台服务后会再试")
+            return
+        }
+        let wait = AgentLink.retrySteps[failures]
+        failures += 1
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.connect()
+        }
+    }
+
+    /// `c`: the connection whose reader ended; a late reader of an older one is ignored.
+    private func dropped(_ c: Int32? = nil) {
+        if let c = c, c != fd { return }
         guard connected || fd >= 0 else { return }
         if fd >= 0 { close(fd); fd = -1 }
         connected = false
@@ -79,6 +122,8 @@ final class AgentLink: ObservableObject {
         emit(["event": "agent.disconnected"])
         for (_, cb) in pendingCalls { cb(.failure(AgentError("disconnected", t("与后台服务的连接断开")))) }
         pendingCalls = [:]
+        // a connection that lasted is a restart: try at once; one that died young backs off
+        if Date().timeIntervalSince(connectedAt) > 30 { failures = 0; connect() } else { retryLater() }
     }
 
     private func receive(_ msg: [String: Any]) {
@@ -352,12 +397,12 @@ final class AgentLink: ObservableObject {
 
     /// Restarts whichever agent is running, so it picks up a changed Safari path.
     func restartAgent() {
-        if Installer.residentEnabled {
-            Installer.kickstartResident()
-        } else {
-            AgentSupervisor.shared.restartTemporary()
-        }
+        failures = 0
         dropped()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.connect() }
+        Task.detached(priority: .utility) {
+            // the new agent's socket wakes connect(); launchctl may take a moment
+            if Installer.residentEnabled { Installer.kickstartResident() }
+            else { AgentSupervisor.shared.restartTemporary() }
+        }
     }
 }
