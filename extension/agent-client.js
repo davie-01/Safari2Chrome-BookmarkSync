@@ -44,8 +44,7 @@ export class AgentClient {
       const err = (globalThis.chrome && chrome.runtime.lastError && chrome.runtime.lastError.message) || 'native host disconnected';
       this.lastError = err;
       this.port = null;
-      for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(Object.assign(new Error(err), { code: 'hostDisconnected' })); }
-      this.pending.clear();
+      this._failPending(err, 'hostDisconnected');
       this._dropChunks();
       this._emit({ event: 'agent.disconnected', message: err });
     });
@@ -79,7 +78,12 @@ export class AgentClient {
   _onMessage(m) {
     if (m && m.chunk) { this._onChunk(m.chunk); return; }
     if (m && m.rpc !== undefined) { this._answerRpc(m); return; }
-    if (m && m.event) { this._emit(m); return; }
+    if (m && m.event) {
+      // the host lost the agent but keeps our port: nothing in flight will be answered
+      if (m.event === 'agent.disconnected') this._failPending('agent disconnected', 'agentGone');
+      this._emit(m);
+      return;
+    }
     const p = this.pending.get(m?.id);
     if (!p) return;
     this.pending.delete(m.id);
@@ -121,6 +125,11 @@ export class AgentClient {
     let msg;
     try { msg = JSON.parse(new TextDecoder().decode(all)); } catch { console.warn('dropping undecodable message', cid); return; }
     this._onMessage(msg);
+  }
+
+  _failPending(message, code) {
+    for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(Object.assign(new Error(message), { code })); }
+    this.pending.clear();
   }
 
   /** Forgets one partly received message, or all of them. */

@@ -86,3 +86,12 @@ test('agent client completes, cancels the expiry, and validates chunks', (t) => 
   disconnect();
   assert.equal(client.chunks.size, 0);
 });
+
+test('agent client fails requests in flight when the host reports the agent gone', async () => {
+  const { client } = chunkClient();
+  const p = client.request('engine.scan', {}, { timeoutMs: 60000 });
+  client._onMessage({ event: 'agent.disconnected' });
+  await assert.rejects(p, (e) => e.code === 'agentGone');
+  assert.equal(client.pending.size, 0);
+  assert.ok(client.connected); // the port to the host stays
+});

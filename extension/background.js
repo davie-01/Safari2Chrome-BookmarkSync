@@ -47,7 +47,9 @@ async function announce() {
   } catch (e) {
     announced = null;
     console.warn('endpoint.hello failed', e);
-    reconnect.schedule();
+    // The host is up but the agent is not: the host says "agent.available" when it is back.
+    // Anything else (the host itself gone, a timeout) needs us to try again.
+    if (!(agent.connected && e.code === 'agentUnavailable')) reconnect.schedule();
   }
 }
 agent.onConnect(() => { announce(); });
@@ -173,9 +175,11 @@ agent.onEvent((ev) => {
   if (ev.event === 'agent.disconnected') {
     announced = null;
     toUI(ev);
-    reconnect.schedule();
+    // only when the host itself is gone; otherwise it reconnects and reports "agent.available"
+    if (!agent.connected) reconnect.schedule();
     return;
   }
+  if (ev.event === 'agent.available') { announce(); return; }
   if (ev.event === 'pending') refreshBadge(ev.pending);
   if (ev.event === 'autoRun') refreshBadge();
   toUI(ev);
@@ -194,22 +198,41 @@ chrome.action.onClicked.addListener(async () => {
 
 // ---- keep the endpoint online ------------------------------------------------------
 
-// One pending reconnect at a time, backing off while the host or the agent stays down
-// (not installed, broken manifest, agent failing to start), reset once announced.
+// Nothing runs on a schedule while the endpoint is online: the native port keeps this
+// worker alive, and the host reconnects to the agent by itself. Only when the host cannot be
+// reached (not installed, broken manifest) do we try again, once per failure with a growing
+// wait: short waits on a timer while the worker is alive, longer ones as a one-shot alarm
+// that wakes a stopped worker. Failures are counted in session storage, which outlives the
+// worker. After the last step only events reconnect (browser start, a bookmark edit, the UI).
 const reconnect = {
-  steps: [3, 10, 30, 60, 300], // seconds
-  failures: 0,
+  steps: [3, 10, 30, 60, 300, 300, 300, 300], // seconds
+  alarm: 'reconnect',
   timer: null,
-  schedule() {
-    if (this.timer) return;
-    const s = this.steps[Math.min(this.failures, this.steps.length - 1)];
-    this.failures++;
-    this.timer = setTimeout(() => { this.timer = null; ensureOnline(); }, s * 1000);
+  busy: false,
+  async schedule() {
+    if (this.timer || this.busy) return;
+    this.busy = true;
+    try {
+      if (await chrome.alarms.get(this.alarm)) return;
+      const n = (await chrome.storage.session.get('reconnectFailures')).reconnectFailures || 0;
+      if (n >= this.steps.length) { console.warn('native host unreachable; waiting for the next event'); return; }
+      await chrome.storage.session.set({ reconnectFailures: n + 1 });
+      const s = this.steps[n] * (0.8 + Math.random() * 0.4); // profiles do not retry in lockstep
+      if (s < 30) this.timer = setTimeout(() => { this.timer = null; ensureOnline(); }, s * 1000);
+      else await chrome.alarms.create(this.alarm, { delayInMinutes: s / 60 });
+    } catch (e) {
+      console.warn('cannot schedule reconnect', e);
+    } finally {
+      this.busy = false;
+    }
   },
-  reset() {
-    this.failures = 0;
+  async reset() {
     clearTimeout(this.timer);
     this.timer = null;
+    try {
+      await chrome.alarms.clear(this.alarm);
+      await chrome.storage.session.set({ reconnectFailures: 0 });
+    } catch { /* nothing to undo */ }
   },
 };
 
@@ -219,13 +242,10 @@ async function ensureOnline() {
   try { agent.connect(); } catch { reconnect.schedule(); } // a new port announces itself (onConnect)
 }
 
-// An open native messaging port keeps the MV3 service worker alive; the alarm brings the
-// endpoint back after the browser suspended us. A pending backoff is left alone.
-chrome.alarms.create('keepalive', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(async (a) => {
-  if (a.name !== 'keepalive' || reconnect.timer) return;
-  await ensureOnline();
+  if (a.name === reconnect.alarm) await ensureOnline();
 });
+chrome.alarms.clear('keepalive'); // the periodic alarm of earlier versions
 
 async function refreshBadge(pending) {
   let p = pending;

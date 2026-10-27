@@ -510,3 +510,17 @@ Chrome 书签事件 ─────┤
 3. 影子验证持续数天且没有漏报后，删除 30 秒检查，以及 15 分钟和 6 小时的完整扫描。
 
 **完成后**：稳定状态下只剩由事件或失败触发的一次性定时（防抖、超时、退避、宽限期）。验收方式：代码中不再有重复定时器；活动监视器"能耗"页的"空闲唤醒"或 `powermetrics` 显示 Agent、App、Native Host 在空闲时没有规律性唤醒。
+
+### 14.5 实施进度
+
+| 项 | 状态 | 说明 |
+| --- | --- | --- |
+| 第一阶段 1～4 | 已完成 | 见 14.3；`AutoScheduleTests` 覆盖结果分类和调度 |
+| App 3 秒重连 | 已移除 | 在以下时机尝试连接：启动、断线、`agent.sock` 出现、App 被激活，以及失败后的一次性退避（1～60 秒，8 次后停止）。`ensureRunning` 与 launchctl 已移出主线程 |
+| 临时 Agent 2 秒父进程检查 | 已移除 | 改为检测 stdin 管道 EOF；stdin 不是 App 的管道时，退回到 `DispatchSourceProcess` 监听父进程退出 |
+| Agent 每日空定时器 | 已移除 | 改用 `NSMachPort` 保持主 RunLoop 运行 |
+| 扩展每分钟 alarm | 已移除 | 由 Native Host（`AgentUpstream`）负责重连 Agent，并发送 `agent.available`；扩展只在 Host 本身不可达时退避：3 秒和 10 秒用定时器，30 秒起用一次性 alarm，8 次后停止。`background.test.js` 与 `AgentUpstreamTests` 覆盖这些行为 |
+| Agent 15 分钟维护 | 待第三阶段 | |
+| Agent 30 秒 Safari 兜底 | 待第四阶段 | |
+
+实施中新发现的问题：Agent 先 `bind()` 后 `listen()`，socket 文件出现时还不能连接。Host 在 socket 事件之后的连接若被拒绝，会在约 3 秒内补试几次（50 毫秒起翻倍）。App 端由一次性退避兜底。
