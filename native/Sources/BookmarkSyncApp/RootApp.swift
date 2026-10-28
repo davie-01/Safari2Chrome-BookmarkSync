@@ -58,18 +58,35 @@ struct RootApp: App {
     }
 }
 
-/// Brings the single window back (⌘Q only hides it) and optionally switches page.
+/// SwiftUI's own action for (re)opening the main window scene, kept from a view that has it.
+/// Once the window was closed (red button) the scene is gone: ordering the old NSWindow to
+/// the front does not bring it back, only openWindow does. It also fronts a hidden window.
+@MainActor enum MainWindowOpener {
+    static var open: OpenWindowAction?
+}
+
+/// Brings the single window back (⌘Q hides it, the red button closes it) and optionally
+/// switches page.
 @MainActor func showMainWindow(_ tab: AppTab? = nil) {
     if let tab = tab { AgentLink.shared.tab = tab }
     AgentLink.shared.uiVisible = true
     NSApp.setActivationPolicy(.regular)
-    NSApp.activate(ignoringOtherApps: true)
-    if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.title == "BookmarkSync" }) {
+    if let open = MainWindowOpener.open {
+        open(id: "main")
+    } else if let w = mainWindow() {
+        w.makeKeyAndOrderFront(nil)
+    }
+    NSApp.activate()
+    // openWindow may build the window on the next turn of the run loop
+    DispatchQueue.main.async {
+        guard let w = mainWindow() else { return }
         w.makeKeyAndOrderFront(nil)
         w.makeFirstResponder(nil)
-    } else {
-        NSApp.sendAction(Selector(("newWindowForTab:")), to: nil, from: nil)
     }
+}
+
+@MainActor func mainWindow() -> NSWindow? {
+    NSApp.windows.first { AppDelegate.isMainWindow($0) }
 }
 
 enum MenuBarPref {
@@ -149,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct MenuBarMenu: View {
     @EnvironmentObject var link: AgentLink
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(link.connected ? t("后台服务运行中") : t("后台服务未连接"))
@@ -158,8 +176,8 @@ struct MenuBarMenu: View {
         Toggle(t("自动同步"), isOn: Binding(get: { link.settings.autoSync },
                                      set: { link.save(["autoSync": $0]) })).disabled(!link.connected)
         Divider()
-        Button(t("打开主窗口")) { showMainWindow(.sync) }
-        Button(t("设置…")) { showMainWindow(.rules) }
+        Button(t("打开主窗口")) { MainWindowOpener.open = openWindow; showMainWindow(.sync) }
+        Button(t("设置…")) { MainWindowOpener.open = openWindow; showMainWindow(.rules) }
         Divider()
         Button(t("退出 BookmarkSync")) { AppDelegate.reallyQuit() }
     }

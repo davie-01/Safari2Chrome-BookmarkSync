@@ -5,6 +5,7 @@ import AgentCore
 /// Every page is sized to fit at the default window size, so no page scrolls.
 struct MainWindow: View {
     @EnvironmentObject var link: AgentLink
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +20,10 @@ struct MainWindow: View {
         }
         .frame(minWidth: 720, minHeight: 520)
         .focusEffectDisabled()
-        .onAppear { link.refresh() }
+        .onAppear {
+            MainWindowOpener.open = openWindow // for the Dock and menu paths (showMainWindow)
+            link.refresh()
+        }
     }
 
     @ViewBuilder private var page: some View {
