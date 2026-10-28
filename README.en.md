@@ -2,7 +2,7 @@
 
 Keeps bookmarks in step between **Safari** and Chromium browsers — **Chrome, Edge, Brave, Vivaldi, Arc** — on one Mac. Everything happens locally: no server, no account, nothing uploaded.
 
-[中文](README.md) · [Architecture](docs/ARCHITECTURE.md) · [Privacy](PRIVACY.md)
+[中文](README.md) · [Architecture](docs/ARCHITECTURE.md) · [Changelog](CHANGELOG.md) (Chinese) · [Privacy](PRIVACY.md)
 
 ---
 
