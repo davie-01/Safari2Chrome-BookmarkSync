@@ -1,5 +1,16 @@
 # 版本记录
 
+## 0.2.2 — 2026-11-02
+
+### 修复
+
+- App 开着时，常驻后台服务一重启就可能被 App 拉起的临时后台服务顶替。常驻服务拿不到锁，约每 10 秒启动失败一次并写一条错误日志，直到 App 退出。现在 App 会先等常驻服务恢复，约 14 秒后仍连不上才启动临时服务。
+- 临时后台服务不再继承影子验证开关 `BMSYNC_SHADOW_POLL`。
+
+### 行为变化
+
+- 开启常驻模式但常驻服务确实起不来时，App 启动临时服务的时间从约 1 秒变为约 14 秒。
+
 ## 0.2.1 — 2026-10-28
 
 这一版集中降低 CPU、内存和唤醒次数，并修复了几处同步与界面问题。分析过程和验证结果见 [docs/PERFORMANCE-AUDIT.md](docs/PERFORMANCE-AUDIT.md) 与 [docs/EVENT-DRIVEN-TIMER-OPTIMIZATION.md](docs/EVENT-DRIVEN-TIMER-OPTIMIZATION.md)。

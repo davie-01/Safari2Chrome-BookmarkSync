@@ -3,7 +3,7 @@ import AgentCore
 
 /// Keeps an agent available while the app is open.
 ///
-/// Resident mode on  → launchd owns the agent; this class does nothing.
+/// Resident mode on  → launchd owns the agent; this class only steps in if it cannot start.
 /// Resident mode off → the app runs one as a child process and kills it on quit, so syncing
 /// works while the app is open and nothing stays behind afterwards. The agent itself holds a
 /// lock, so a temporary one can never take the socket from the resident one.
@@ -20,25 +20,30 @@ final class AgentSupervisor {
         return child?.isRunning ?? false
     }
 
-    /// Starts a temporary agent unless one is already reachable. Blocks (launchctl, a short
-    /// wait for the resident one): call it off the main thread.
-    private var kickstarted = false
+    /// When the agent we are waiting for went away, and whether launchd was nudged since.
+    private var downSince: Date?
+    private var nudged = false
 
+    /// Does what the current outage calls for (see AgentStartPolicy). The caller retries with
+    /// backoff and the socket's appearance wakes it sooner. May block on launchctl: call it off
+    /// the main thread.
     func ensureRunning() {
-        if agentReachable() { return }
-        lock.lock()
-        let nudge = Installer.residentEnabled && !kickstarted
-        kickstarted = true
-        lock.unlock()
-        if nudge {
-            // launchd owns it; nudge it once (an upgrade can leave a stale service record).
-            Installer.kickstartResident()
-            Thread.sleep(forTimeInterval: 1.0)
-            if agentReachable() { return }
+        if agentReachable() {
+            lock.lock(); downSince = nil; nudged = false; lock.unlock()
+            return
         }
-        // Either resident is off, or the resident service cannot start: run one ourselves so
-        // syncing works while the app is open. The agent's lock keeps the two from clashing.
-        startTemporary()
+        lock.lock()
+        let now = Date()
+        if downSince == nil { downSince = now; nudged = false }
+        let action = AgentStartPolicy.next(residentEnabled: Installer.residentEnabled,
+                                           downFor: now.timeIntervalSince(downSince ?? now), nudged: nudged)
+        if action == .nudgeResident { nudged = true }
+        lock.unlock()
+        switch action {
+        case .wait: break
+        case .nudgeResident: Installer.kickstartResident() // an upgrade can leave a stale service record
+        case .startTemporary: startTemporary() // the agent's lock keeps the two from clashing
+        }
     }
 
     func agentReachable() -> Bool {
@@ -57,6 +62,7 @@ final class AgentSupervisor {
         p.standardError = FileHandle.nullDevice
         let pipe = Pipe()
         p.standardInput = pipe
+        p.environment = AgentStartPolicy.temporaryEnvironment(ProcessInfo.processInfo.environment)
         do {
             try p.run()
             child = p

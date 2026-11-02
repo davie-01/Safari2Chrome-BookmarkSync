@@ -537,7 +537,7 @@ launchctl setenv BMSYNC_SHADOW_POLL 1
 launchctl kickstart -k gui/$(id -u)/com.mars.davie-01.BookmarkSync.sync
 ```
 
-开启后，Agent 每 30 秒检查一次 Safari 的运行状态和书签文件，在 `~/Library/Logs/BookmarkSync/agent.log` 中把事件没有报告的变化记录为 `shadow: missed …`（同一次漏报只记录一次）：
+这个开关只作用于 launchd 启动的常驻 Agent，App 拉起的临时 Agent 不继承。开启后，Agent 每 30 秒检查一次 Safari 的运行状态和书签文件，在 `~/Library/Logs/BookmarkSync/agent.log` 中把事件没有报告的变化记录为 `shadow: missed …`（同一次漏报只记录一次）：
 
 - `a bookmarks change`：书签变化被漏掉，需要排查。
 - `a metadata-only rewrite`：只是元数据重写被漏掉，不影响同步，只用于了解监听覆盖情况。
