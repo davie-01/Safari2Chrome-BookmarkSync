@@ -1,20 +1,32 @@
 import Foundation
 
-/// What the app does when it cannot reach an agent. launchd restarts the resident service by
-/// itself, so a temporary agent started during that gap would take the lock and leave the
-/// resident one failing with alreadyRunning, again every 10 s, until the app quits.
+/// What the app does when it cannot reach an agent. The resident service belongs to launchd
+/// alone: a temporary agent started beside it would take the lock and leave launchd's restarts
+/// failing with alreadyRunning, every 10 s, until the app quits. So temporary agents exist only
+/// when the user turned the resident service off; if it is on but down, the app repairs it or
+/// says so.
 public enum AgentStartPolicy {
-    public enum Action: Equatable { case wait, nudgeResident, startTemporary }
+    public enum ResidentState: Equatable { case off, on, needsApproval }
+    public enum Action: Equatable { case wait, restartResident, reregisterResident, startTemporary, reportNeedsApproval, reportCannotStart }
 
+    /// A plain restart is usually over by now; acting sooner would only interrupt it.
+    public static let restartAfter: TimeInterval = 1
     /// launchd holds a respawn back by up to 10 s (its throttle interval).
-    public static let residentGrace: TimeInterval = 12
-    /// A plain restart is usually over by now; a nudge sooner would only interrupt it.
-    public static let nudgeAfter: TimeInterval = 1
+    public static let reregisterAfter: TimeInterval = 12
+    public static let giveUpAfter: TimeInterval = 30
 
-    public static func next(residentEnabled: Bool, downFor: TimeInterval, nudged: Bool) -> Action {
-        guard residentEnabled else { return .startTemporary }
-        if downFor >= residentGrace { return .startTemporary }
-        return downFor >= nudgeAfter && !nudged ? .nudgeResident : .wait
+    /// `tried`: repair steps already taken in this outage.
+    public static func next(_ state: ResidentState, downFor: TimeInterval, tried: Int) -> Action {
+        switch state {
+        case .off: return .startTemporary
+        case .needsApproval: return .reportNeedsApproval
+        case .on:
+            switch tried {
+            case 0: return downFor >= restartAfter ? .restartResident : .wait
+            case 1: return downFor >= reregisterAfter ? .reregisterResident : .wait
+            default: return downFor >= giveUpAfter ? .reportCannotStart : .wait
+            }
+        }
     }
 
     /// A temporary agent is ordinary use: development switches the app happened to be launched

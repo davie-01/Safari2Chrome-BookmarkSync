@@ -2,38 +2,43 @@ import XCTest
 @testable import AgentCore
 
 final class AgentStartPolicyTests: XCTestCase {
-    private func next(_ downFor: TimeInterval, nudged: Bool = false, resident: Bool = true) -> AgentStartPolicy.Action {
-        AgentStartPolicy.next(residentEnabled: resident, downFor: downFor, nudged: nudged)
+    private func next(_ downFor: TimeInterval, tried: Int = 0, _ state: AgentStartPolicy.ResidentState = .on) -> AgentStartPolicy.Action {
+        AgentStartPolicy.next(state, downFor: downFor, tried: tried)
     }
 
-    func testResidentRestartDoesNotStartATemporaryAgent() {
+    func testResidentOnNeverStartsATemporaryAgent() {
+        for downFor in stride(from: 0.0, through: 600, by: 0.5) {
+            for tried in 0...3 { XCTAssertNotEqual(next(downFor, tried: tried), .startTemporary) }
+            XCTAssertNotEqual(next(downFor, .needsApproval), .startTemporary)
+        }
+    }
+
+    func testRepairStepsInOrder() {
         XCTAssertEqual(next(0), .wait) // launchd is on it
-        XCTAssertEqual(next(1), .nudgeResident)
-        XCTAssertEqual(next(1, nudged: true), .wait)
-        XCTAssertEqual(next(11.9, nudged: true), .wait) // still within launchd's throttle
+        XCTAssertEqual(next(1), .restartResident)
+        XCTAssertEqual(next(1, tried: 1), .wait)
+        XCTAssertEqual(next(11.9, tried: 1), .wait) // still within launchd's throttle
+        XCTAssertEqual(next(12, tried: 1), .reregisterResident)
+        XCTAssertEqual(next(29, tried: 2), .wait)
+        XCTAssertEqual(next(30, tried: 2), .reportCannotStart)
     }
 
-    func testResidentThatCannotStartFallsBackToATemporaryAgent() {
-        XCTAssertEqual(next(12, nudged: true), .startTemporary)
-        XCTAssertEqual(next(14), .startTemporary)
-    }
-
-    func testResidentOffStartsATemporaryAgentAtOnce() {
-        XCTAssertEqual(next(0, resident: false), .startTemporary)
-    }
-
-    /// The real backoff has to reach the fallback, and in the order above.
-    func testAppRetriesReachTheFallback() {
-        var at: TimeInterval = 0
+    /// The app's real backoff has to get all the way to the report.
+    func testAppRetriesReachTheReport() {
+        var at: TimeInterval = 0, tried = 0
         var actions = [next(at)]
-        var nudged = false
-        for step in [1.0, 3, 10] {
+        for step in [1.0, 3, 10, 30] {
             at += step
-            let a = next(at, nudged: nudged)
-            if a == .nudgeResident { nudged = true }
+            let a = next(at, tried: tried)
+            if a == .restartResident || a == .reregisterResident { tried += 1 }
             actions.append(a)
         }
-        XCTAssertEqual(actions, [.wait, .nudgeResident, .wait, .startTemporary])
+        XCTAssertEqual(actions, [.wait, .restartResident, .wait, .reregisterResident, .reportCannotStart])
+    }
+
+    func testOtherStates() {
+        XCTAssertEqual(next(0, .off), .startTemporary)
+        XCTAssertEqual(next(0, .needsApproval), .reportNeedsApproval) // launchd will not run it; repairing cannot help
     }
 
     func testTemporaryAgentDoesNotInheritTheShadowSwitch() {

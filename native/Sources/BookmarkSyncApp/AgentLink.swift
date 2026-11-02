@@ -78,15 +78,19 @@ final class AgentLink: ObservableObject {
         retryTask = nil
         Task.detached(priority: .utility) { [weak self] in
             // may start or nudge the agent and wait for it: never on the main thread
-            AgentSupervisor.shared.ensureRunning()
+            let problem = AgentSupervisor.shared.ensureRunning()
             let c = connectUnix(Paths.socket.path)
-            await self?.finishConnect(c)
+            await self?.finishConnect(c, problem)
         }
     }
 
-    private func finishConnect(_ c: Int32?) {
+    private func finishConnect(_ c: Int32?, _ problem: String?) {
         connecting = false
-        guard let c = c else { retryLater(); return }
+        guard let c = c else {
+            if let problem = problem { lastError = problem }
+            retryLater()
+            return
+        }
         attach(c)
     }
 
@@ -130,7 +134,7 @@ final class AgentLink: ObservableObject {
 
     private func retryLater() {
         guard failures < AgentLink.retrySteps.count else {
-            lastError = t("后台服务无法启动；打开主窗口或重启后台服务后会再试")
+            if lastError == nil { lastError = t("后台服务无法启动；打开主窗口或重启后台服务后会再试") }
             return
         }
         let wait = AgentLink.retrySteps[failures]
@@ -410,6 +414,8 @@ final class AgentLink: ObservableObject {
 
     func setResident(_ on: Bool) {
         do {
+            AgentSupervisor.shared.forgetOutage()
+            lastError = nil
             if on { AgentSupervisor.shared.stopTemporary() }
             let line = try Installer.setResident(on)
             resident = Installer.residentEnabled
@@ -427,8 +433,11 @@ final class AgentLink: ObservableObject {
 
     /// Restarts whichever agent is running, so it picks up a changed Safari path.
     func restartAgent() {
+        AgentSupervisor.shared.forgetOutage()
         failures = 0
+        lastError = nil
         dropped()
+        connect() // also when there was no connection to drop: this is the way to retry
         Task.detached(priority: .utility) {
             // the new agent's socket wakes connect(); launchctl may take a moment
             if Installer.residentEnabled { Installer.kickstartResident() }

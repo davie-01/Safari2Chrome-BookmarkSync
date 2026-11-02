@@ -25,9 +25,14 @@ struct PermissionsPage: View {
             Section {
                 PermissionRow(
                     title: t("后台运行"),
-                    ok: link.resident,
-                    detail: link.resident ? t("已注册，登录时自动启动") : t("未注册：只有 BookmarkSync 打开时才同步"),
+                    ok: link.resident && !Installer.residentNeedsApproval,
+                    detail: Installer.residentNeedsApproval ? t("等待批准：在登录项设置里打开 BookmarkSync")
+                        : link.resident ? t("已注册，登录时自动启动") : t("未注册：只有 BookmarkSync 打开时才同步"),
                     action: (t("打开登录项设置"), { open("x-apple.systempreferences:com.apple.LoginItems-Settings.extension") }))
+                if link.resident && !link.connected {
+                    // the setting for this needs a connection; this is the way out without one
+                    Button(t("改为只在 App 打开时同步")) { link.setResident(false) }
+                }
                 PermissionRow(
                     title: t("浏览器扩展连接"),
                     ok: link.endpoints.contains { !$0.isSafari && $0.isOnline },

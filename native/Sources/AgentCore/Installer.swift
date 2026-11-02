@@ -177,6 +177,9 @@ public enum Installer {
         return FileManager.default.fileExists(atPath: Paths.launchAgentPlist.path)
     }
 
+    /// Registered, but launchd will not run it until the user allows it in 登录项与扩展.
+    public static var residentNeedsApproval: Bool { embeddedService.status == .requiresApproval }
+
     /// Turns the resident background service on or off. Returns a short status line.
     @discardableResult
     public static func setResident(_ on: Bool) throws -> String {
@@ -193,7 +196,8 @@ public enum Installer {
 
     /// Restarts the resident service so it picks up changed settings.
     public static func kickstartResident() {
-        _ = launchctl(["kickstart", "-k", "gui/\(getuid())/\(AppInfo.embeddedAgentLabel)"])
+        let label = FileManager.default.fileExists(atPath: Paths.launchAgentPlist.path) ? AppInfo.agentLabel : AppInfo.embeddedAgentLabel
+        _ = launchctl(["kickstart", "-k", "gui/\(getuid())/\(label)"])
     }
 
     public static var agentStatus: String {

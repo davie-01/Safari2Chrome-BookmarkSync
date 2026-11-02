@@ -54,7 +54,7 @@ BookmarkSync.app
 ## 进程与服务
 
 - 常驻开启时，后台服务是通过 `SMAppService` 注册的登录项（显示为 BookmarkSync）。
-- 常驻关闭时，App 打开期间会拉起一个临时后台服务（`agent --exit-with-parent`），App 退出即结束。
+- 常驻关闭时，App 打开期间会拉起一个临时后台服务（`agent --exit-with-parent`），App 退出即结束。常驻开启时不会启动它：常驻服务连不上时，App 依次重启、重新注册、提示用户，避免两种服务争抢 `agent.lock`。
 - 后台服务启动时对 `agent.lock` 加 flock，保证同一时刻只有一个实例拥有 socket 和状态。
 
 ### macOS 打包上的三个坑
