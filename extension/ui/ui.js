@@ -91,6 +91,16 @@ function renderStatus() {
   if (st.agentError || !st.agent) {
     chips.append(chip(t('后台服务未连接'), 'bad', st.agentError?.message));
     setup.hidden = false;
+    if (st.agentError?.code === 'offline') {
+      // only the app says this: it is installed and running, just without its agent
+      const down = t('后台服务未运行');
+      setup.replaceChildren(
+        h('h2', {}, down),
+        h('p', { class: 'muted' }, st.agentError.message === down ? t('正在尝试恢复；也可以到「权限」页重启后台服务。') : st.agentError.message),
+      );
+      $('#btn-scan').disabled = true;
+      return;
+    }
     setup.replaceChildren(
       h('h2', {}, t('需要先安装本机组件')),
       h('p', { class: 'muted' }, t('连接失败：{msg}', { msg: st.agentError?.message || t('未知错误') })),
@@ -833,7 +843,7 @@ for (const b of document.querySelectorAll('[data-bulk]')) {
 }
 
 backend.onEvent((m) => {
-  if (['safari.running', 'agent.disconnected', 'endpoints.changed', 'pending'].includes(m.event)) loadStatus();
+  if (['safari.running', 'agent.connected', 'agent.disconnected', 'endpoints.changed', 'pending'].includes(m.event)) loadStatus();
   if (m.event === 'autoRun' && m.result && !m.result.skipped) loadStatus();
   if (m.event === 'changed' && ui.scan) {
     $('#scan-meta-row').hidden = false;

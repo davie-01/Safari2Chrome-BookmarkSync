@@ -14,6 +14,9 @@ final class AgentLink: ObservableObject {
     @Published var settings = EngineSettings()
     @Published private(set) var settingsLoaded = false
     @Published private(set) var lastError: String?
+    /// Why there is no agent, when that needs the user. Kept apart from lastError, which any
+    /// failed call overwrites, and cleared only by a connection or a new attempt.
+    @Published private(set) var connectionProblem: String?
     @Published private(set) var busy: String?
     @Published private(set) var lastMessage: String?
     @Published private(set) var resident = Installer.residentEnabled
@@ -87,7 +90,7 @@ final class AgentLink: ObservableObject {
     private func finishConnect(_ c: Int32?, _ problem: String?) {
         connecting = false
         guard let c = c else {
-            if let problem = problem { lastError = problem }
+            if let problem = problem { report(problem) }
             retryLater()
             return
         }
@@ -121,6 +124,8 @@ final class AgentLink: ObservableObject {
         connected = true
         connectedAt = Date()
         lastError = nil
+        connectionProblem = nil
+        emit(["event": "agent.connected"])
         Thread.detachNewThread { [weak self] in
             let reader = LineReader(fd: c)
             while let line = reader.next() {
@@ -132,9 +137,15 @@ final class AgentLink: ObservableObject {
         refresh()
     }
 
+    private func report(_ problem: String) {
+        guard problem != connectionProblem else { return }
+        connectionProblem = problem
+        emit(["event": "agent.disconnected"]) // the web UI shows it too
+    }
+
     private func retryLater() {
         guard failures < AgentLink.retrySteps.count else {
-            if lastError == nil { lastError = t("后台服务无法启动；打开主窗口或重启后台服务后会再试") }
+            if connectionProblem == nil { report(t("后台服务无法启动；打开主窗口或重启后台服务后会再试")) }
             return
         }
         let wait = AgentLink.retrySteps[failures]
@@ -181,7 +192,7 @@ final class AgentLink: ObservableObject {
     // MARK: requests
 
     func send(_ type: String, _ params: [String: Any] = [:], _ completion: ((Result<Any?, AgentError>) -> Void)? = nil) {
-        guard connected, fd >= 0 else { completion?(.failure(AgentError("offline", t("后台服务未运行")))); return }
+        guard connected, fd >= 0 else { completion?(.failure(AgentError("offline", connectionProblem ?? t("后台服务未运行")))); return }
         seq += 1
         let id = seq
         var req: [String: Any] = ["id": id, "type": type]
@@ -416,6 +427,7 @@ final class AgentLink: ObservableObject {
         do {
             AgentSupervisor.shared.forgetOutage()
             lastError = nil
+            connectionProblem = nil
             if on { AgentSupervisor.shared.stopTemporary() }
             let line = try Installer.setResident(on)
             resident = Installer.residentEnabled
@@ -436,6 +448,7 @@ final class AgentLink: ObservableObject {
         AgentSupervisor.shared.forgetOutage()
         failures = 0
         lastError = nil
+        connectionProblem = nil
         dropped()
         connect() // also when there was no connection to drop: this is the way to retry
         Task.detached(priority: .utility) {

@@ -82,6 +82,7 @@ struct MainWindow: View {
     }
 
     private var statusLine: String {
+        if let p = link.connectionProblem { return "⚠️ \(p)" }
         if let e = link.lastError { return "⚠️ \(e)" }
         if let m = link.lastMessage { return m }
         if let at = link.lastRunAt {

@@ -360,6 +360,7 @@
  "后台服务等待批准：请到 系统设置 → 通用 → 登录项与扩展 打开 BookmarkSync，或在「权限」页改为只在 App 打开时同步": "The background service is waiting for approval: turn on BookmarkSync in System Settings → General → Login Items & Extensions, or switch to syncing only while the app is open on the Permissions page",
  "后台服务无法启动：请在「权限」页重启后台服务，或改为只在 App 打开时同步；详情见日志": "The background service cannot start: restart it on the Permissions page, or switch to syncing only while the app is open. See the log for details",
  "等待批准：在登录项设置里打开 BookmarkSync": "Waiting for approval: turn on BookmarkSync in Login Items settings",
+ "正在尝试恢复；也可以到「权限」页重启后台服务。": "Trying to recover; you can also restart the background service on the Permissions page.",
  "改为只在 App 打开时同步": "Sync only while the app is open",
  "后台服务无法启动；打开主窗口或重启后台服务后会再试": "The background service cannot start; it will be tried again when you open the main window or restart the service"
 }
