@@ -112,15 +112,20 @@ public enum Installer {
 
         if launchAgent {
             // Preferred: agent embedded in the app bundle, registered with SMAppService, so
-            // 登录项与扩展 lists it as "BookmarkSync". If the system refuses (e.g. the item was
-            // switched off there), fall back to the per-user LaunchAgent so sync keeps running.
+            // 登录项与扩展 lists it as "BookmarkSync". If the system cannot register it at all,
+            // fall back to the per-user LaunchAgent so sync keeps running. Not when the user
+            // switched it off there: that is their decision, and the LaunchAgent would run
+            // regardless, under the same switched-off entry.
             // Re-register even when already enabled: launchd keeps a snapshot of the app
             // bundle, so after an upgrade the old record can fail to spawn (EX_CONFIG).
             let svc = embeddedService
             if svc.status == .enabled { try? svc.unregister(); usleep(400_000) }
-            var registered = false
-            do { try svc.register(); registered = svc.status == .enabled || svc.status == .requiresApproval }
-            catch { report.append("⚠️ SMAppService 注册失败：\(error.localizedDescription)（\(describe(svc.status))）") }
+            var failure: Error?
+            do { try svc.register() } catch { failure = error }
+            let registered = !fallsBackToLaunchAgent(svc.status)
+            if let failure = failure, !registered {
+                report.append("⚠️ SMAppService 注册失败：\(failure.localizedDescription)（\(describe(svc.status))）")
+            }
             if registered {
                 for label in AppInfo.legacyAgentLabels {
                     _ = launchctl(["bootout", "gui/\(getuid())/\(label)"])
@@ -129,7 +134,9 @@ public enum Installer {
                     _ = launchctl(["bootout", "gui/\(getuid())/\(AppInfo.agentLabel)"])
                     try? FileManager.default.removeItem(at: Paths.launchAgentPlist)
                 }
-                report.append("✓ 后台服务：\(describe(svc.status))（登录项中显示为 BookmarkSync）")
+                report.append(svc.status == .requiresApproval
+                    ? "⚠️ 后台服务：\(describe(svc.status))，批准前不会运行"
+                    : "✓ 后台服务：\(describe(svc.status))（登录项中显示为 BookmarkSync）")
                 if svc.status == .requiresApproval {
                     report.append("→ 请在 系统设置 → 通用 → 登录项与扩展 里打开 BookmarkSync 的开关")
                 }
@@ -140,6 +147,11 @@ public enum Installer {
         }
         report.append("→ 下一步：在 系统设置 → 隐私与安全性 → 完全磁盘访问权限 中加入并勾选 BookmarkSync.app，然后执行 `bmsync status` 检查。")
         return report
+    }
+
+    /// Only when the service could not be registered, as opposed to waiting for the user.
+    static func fallsBackToLaunchAgent(_ status: SMAppService.Status) -> Bool {
+        status != .enabled && status != .requiresApproval
     }
 
     static func installLegacyAgent(exe: String) throws {
@@ -178,7 +190,9 @@ public enum Installer {
     }
 
     /// Registered, but launchd will not run it until the user allows it in 登录项与扩展.
-    public static var residentNeedsApproval: Bool { embeddedService.status == .requiresApproval }
+    public static var residentNeedsApproval: Bool {
+        embeddedService.status == .requiresApproval && !FileManager.default.fileExists(atPath: Paths.launchAgentPlist.path)
+    }
 
     /// Turns the resident background service on or off. Returns a short status line.
     @discardableResult

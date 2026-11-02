@@ -1,3 +1,4 @@
+import ServiceManagement
 import XCTest
 @testable import AgentCore
 
@@ -39,6 +40,14 @@ final class AgentStartPolicyTests: XCTestCase {
     func testOtherStates() {
         XCTAssertEqual(next(0, .off), .startTemporary)
         XCTAssertEqual(next(0, .needsApproval), .reportNeedsApproval) // launchd will not run it; repairing cannot help
+    }
+
+    /// Switched off in 登录项与扩展: the LaunchAgent would run anyway, against the user's choice.
+    func testLaunchAgentOnlyWhenTheServiceCannotBeRegistered() {
+        XCTAssertFalse(Installer.fallsBackToLaunchAgent(.requiresApproval))
+        XCTAssertFalse(Installer.fallsBackToLaunchAgent(.enabled))
+        XCTAssertTrue(Installer.fallsBackToLaunchAgent(.notRegistered))
+        XCTAssertTrue(Installer.fallsBackToLaunchAgent(.notFound))
     }
 
     func testTemporaryAgentDoesNotInheritTheShadowSwitch() {

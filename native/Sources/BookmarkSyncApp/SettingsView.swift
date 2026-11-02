@@ -87,7 +87,7 @@ struct RulesPage: View {
                 Card {
                     VStack(spacing: 8) {
                         CardTitle(t("后台"))
-                        SettingRow(t("常驻后台同步"), note: link.resident ? t("登录时自动启动，浏览器没开也同步") : t("只在 App 打开时同步，退出后不留进程")) {
+                        SettingRow(t("常驻后台同步"), note: Installer.residentNeedsApproval ? t("等待批准：在登录项设置里打开 BookmarkSync") : link.resident ? t("登录时自动启动，浏览器没开也同步") : t("只在 App 打开时同步，退出后不留进程")) {
                             Toggle("", isOn: Binding(get: { link.resident }, set: { link.setResident($0) })).labelsHidden()
                         }
                         Divider()
