@@ -39,5 +39,10 @@ jobs:
         run: scripts/package.sh
       - uses: actions/upload-artifact@v4
         with:
+          name: bookmarksync-symbols
+          path: build/symbols/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
           name: bookmarksync-dist
           path: dist/

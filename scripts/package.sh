@@ -2,18 +2,20 @@
 # Builds the release artefacts into dist/: the app in a .dmg, and the extension as a .zip.
 # Usage: scripts/package.sh [--no-dmg]
 #   CODESIGN_ID="Apple Development: ..."  passed through to build-app.sh
+#   MAX_APP_SIZE_BYTES=2000000           signed app size limit, passed through
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 VERSION="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$ROOT/extension/manifest.json" | head -1)"
 
-rm -rf "$DIST"
-mkdir -p "$DIST"
-
 echo "==> building BookmarkSync.app $VERSION"
-"$ROOT/scripts/build-app.sh" --no-install >/dev/null
+"$ROOT/scripts/build-app.sh" --no-install
 APP="$ROOT/build/BookmarkSync.app"
 [ -d "$APP" ] || { echo "build failed: no $APP"; exit 1; }
+
+# Preserve the previous packages if the build, signature or size check fails.
+rm -rf "$DIST"
+mkdir -p "$DIST"
 
 echo "==> extension zip (source install: keeps the pinned ID)"
 (cd "$ROOT/extension" && zip -qr "$DIST/bookmarksync-extension-$VERSION.zip" . \

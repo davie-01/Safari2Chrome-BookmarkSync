@@ -21,6 +21,12 @@ jobs:
           cd ../native && swift test
       - name: Package
         run: scripts/package.sh
+      - name: Save debug symbols separately from the release downloads
+        uses: actions/upload-artifact@v4
+        with:
+          name: bookmarksync-symbols-${{ github.ref_name }}
+          path: build/symbols/
+          if-no-files-found: error
       - name: Release
         uses: softprops/action-gh-release@v2
         with:

@@ -169,7 +169,13 @@ cd extension && node --test test/*.test.js   # sync engine and UI logic
 cd native && swift test                      # Safari read/write, fidelity, engine host
 node extension/build-engine.mjs              # rebuild the bundle after changing extension/engine/**
 scripts/build-app.sh                         # package and install
+scripts/build-app.sh --no-install --test       # test the size-optimized Release build and package without installing
+scripts/package.sh                           # create the DMG, extension ZIPs and checksums in dist/
 ```
+
+Packaging uses `-Osize`, strips debug and local symbols before signing, and checks that all files in the signed app total no more than **2,000,000 bytes (2MB)**. To change the limit, set `MAX_APP_SIZE_BYTES`, for example `MAX_APP_SIZE_BYTES=2500000 scripts/build-app.sh --no-install`.
+
+Matching dSYMs are saved in `build/symbols/<version>/`, outside the app and DMG. CI and release workflows upload them separately as `bookmarksync-symbols*` artifacts for crash symbolication. Archive downloaded symbols yourself; GitHub artifacts expire according to the repository's retention policy.
 
 The engine is plain JavaScript (`extension/engine/`), running in JavaScriptCore inside the app and in Node for the tests — the same code either way. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

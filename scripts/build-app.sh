@@ -3,6 +3,8 @@
 # 以前装在 ~/Applications 的旧副本会先注销并移到废纸篓（同步数据保留）。
 # 用法：scripts/build-app.sh [--no-install] [--test]
 #   CODESIGN_ID="Apple Development: ..."  指定签名身份（默认自动找 Apple Development，找不到则 ad-hoc）
+#   MAX_APP_SIZE_BYTES=2000000          已签名 App 的文件总大小上限（十进制字节）
+# Release 使用 -Osize，符号剥离前将 dSYM 保留在 build/symbols/<版本>/，不放入 App。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NATIVE="$ROOT/native"
@@ -12,6 +14,11 @@ DEST_DIR="/Applications"
 DEST="$DEST_DIR/$APP_NAME"
 DO_INSTALL=1
 DO_TEST=0
+MAX_APP_SIZE_BYTES="${MAX_APP_SIZE_BYTES:-2000000}"
+if ! [[ "$MAX_APP_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MAX_APP_SIZE_BYTES 必须为正整数字节数" >&2
+  exit 2
+fi
 for a in "$@"; do
   case "$a" in
     --no-install) DO_INSTALL=0 ;;
@@ -20,22 +27,41 @@ for a in "$@"; do
 done
 
 cd "$NATIVE"
+RELEASE_FLAGS=(-c release -Xswiftc -Osize)
 if [ "$DO_TEST" = 1 ]; then
-  echo "==> swift test"
-  swift test
+  echo "==> swift test ${RELEASE_FLAGS[*]}"
+  swift test "${RELEASE_FLAGS[@]}"
 fi
-echo "==> swift build -c release"
-swift build -c release
-BINDIR="$(swift build -c release --show-bin-path)"
+echo "==> swift build ${RELEASE_FLAGS[*]}"
+swift build "${RELEASE_FLAGS[@]}"
+BINDIR="$(swift build "${RELEASE_FLAGS[@]}" --show-bin-path)"
 BIN="$BINDIR/bmsync"
 APPBIN="$BINDIR/BookmarkSync"
 VERSION="$("$BIN" version)"
+
+# Keep matching debug symbols outside the app, so stripped release crash reports can
+# still be symbolicated. Some SwiftPM backends create dSYMs; others need dsymutil.
+SYMBOLS="$BUILD/symbols/$VERSION"
+mkdir -p "$SYMBOLS"
+for name in BookmarkSync bmsync; do
+  rm -rf "$SYMBOLS/$name.dSYM"
+  if [ -d "$BINDIR/$name.dSYM" ]; then
+    ditto "$BINDIR/$name.dSYM" "$SYMBOLS/$name.dSYM"
+  else
+    xcrun dsymutil "$BINDIR/$name" -o "$SYMBOLS/$name.dSYM"
+  fi
+done
+xcrun dwarfdump --uuid "$APPBIN" "$BIN" > "$SYMBOLS/UUIDS.txt"
+echo "==> 调试符号已保存到 $SYMBOLS"
 
 echo "==> 打包 $APP_NAME ($VERSION)"
 rm -rf "$BUILD/$APP_NAME"
 mkdir -p "$BUILD/$APP_NAME/Contents/MacOS" "$BUILD/$APP_NAME/Contents/Resources"
 cp "$BIN" "$BUILD/$APP_NAME/Contents/MacOS/bmsync"
 cp "$APPBIN" "$BUILD/$APP_NAME/Contents/MacOS/BookmarkSync"
+# Only strip packaged copies, after saving dSYMs and before signing either binary.
+# Keep global symbols and runtime metadata; remove debug/local symbol table entries.
+xcrun strip -S -x "$BUILD/$APP_NAME/Contents/MacOS/bmsync" "$BUILD/$APP_NAME/Contents/MacOS/BookmarkSync"
 cp "$NATIVE/Resources/engine.js" "$BUILD/$APP_NAME/Contents/Resources/engine.js"
 # the sync UI is shared with the browser extension
 mkdir -p "$BUILD/$APP_NAME/Contents/Resources/web/ui" "$BUILD/$APP_NAME/Contents/Resources/web/icons"
@@ -97,7 +123,18 @@ else
 fi
 codesign --force --sign "$IDENTITY" --identifier com.mars.davie-01.BookmarkSync.helper "$BUILD/$APP_NAME/Contents/MacOS/bmsync"
 codesign --force --sign "$IDENTITY" --identifier com.mars.davie-01.BookmarkSync "$BUILD/$APP_NAME"
-codesign --verify --strict --deep "$BUILD/$APP_NAME" && echo "✓ 签名校验通过"
+codesign --verify --strict --deep "$BUILD/$APP_NAME"
+echo "✓ 签名校验通过"
+
+# Measure the entire signed bundle, including resources and signatures, in bytes.
+# Filesystem block usage varies by volume and is not the release size budget.
+APP_BYTES="$(find "$BUILD/$APP_NAME" -type f -exec stat -f '%z' {} + | awk '{total += $1} END {printf "%.0f", total}')"
+awk -v size="$APP_BYTES" -v limit="$MAX_APP_SIZE_BYTES" \
+  'BEGIN {printf "==> App 文件总大小：%d bytes（%.3f MB），上限 %d bytes\n", size, size / 1000000, limit}'
+if [ "$APP_BYTES" -gt "$MAX_APP_SIZE_BYTES" ]; then
+  echo "App 超出体积上限，已停止安装或发布打包。" >&2
+  exit 1
+fi
 
 [ "$DO_INSTALL" = 1 ] || { echo "已生成 $BUILD/$APP_NAME"; exit 0; }
 

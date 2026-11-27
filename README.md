@@ -188,7 +188,13 @@ cd extension && node --test test/*.test.js   # 同步引擎与界面逻辑的测
 cd native && swift test                      # Safari 读写、保真、引擎宿主的测试
 node extension/build-engine.mjs              # 改了 extension/engine/** 之后重新打包
 scripts/build-app.sh                         # 打包并安装
+scripts/build-app.sh --no-install --test       # 用 Release 体积优化配置测试、打包，不安装
+scripts/package.sh                           # 生成 DMG、扩展 ZIP 和校验和到 dist/
 ```
+
+打包默认使用 `-Osize`，在签名前剥离二进制中的调试与本地符号，并检查完整已签名 App 的文件总大小不超过 **2,000,000 字节（2MB）**。需要调整上限时可设置 `MAX_APP_SIZE_BYTES`，例如 `MAX_APP_SIZE_BYTES=2500000 scripts/build-app.sh --no-install`。
+
+匹配的 dSYM 保存在 `build/symbols/<版本>/`，不放入 App 或 DMG。CI 与 Release 工作流会将它们单独保存为 `bookmarksync-symbols*` 构建附件，供分析崩溃时使用；下载后应自行归档，GitHub 构建附件受仓库保留期限限制。
 
 引擎是纯 JavaScript（`extension/engine/`），在 App 里用 JavaScriptCore 运行，在测试里用 Node 运行，两边是同一份代码。细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
