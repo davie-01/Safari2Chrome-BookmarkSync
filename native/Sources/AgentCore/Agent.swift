@@ -98,9 +98,17 @@ public final class Agent {
     }
 
     private func acceptLoop(_ fd: Int32) -> Never {
+        var wait: UInt32 = 1 // a failure that lasts (out of descriptors) backs off, logged once
         while true {
             let c = accept(fd, nil, nil)
-            if c < 0 { if errno == EINTR { continue }; Log.error("accept errno=\(errno)"); sleep(1); continue }
+            if c < 0 {
+                if errno == EINTR { continue }
+                if wait == 1 { Log.error("accept errno=\(errno); retrying with backoff") }
+                sleep(wait)
+                wait = min(wait * 2, 60)
+                continue
+            }
+            wait = 1
             var one: Int32 = 1
             setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             guard peerIsSameUser(c) else { Log.warn("rejected peer with different uid"); close(c); continue }
@@ -743,6 +751,7 @@ public final class Agent {
         // arrives as events. One light look covers events lost around sleep: a stat, and a
         // fingerprint only if the file changed. No full scan.
         nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+            Log.info("woke from sleep: looking at Safari once") // shows the notification reaches us
             self?.work.async { self?.ensureSafariWatch(); self?.tick() }
         }
         work.async { self.ensureSafariWatch(); self.tick() } // the baseline later looks compare with

@@ -18,7 +18,9 @@ final class AgentLink: ObservableObject {
     /// failed call overwrites, and cleared only by a connection or a new attempt.
     @Published private(set) var connectionProblem: String?
     @Published private(set) var busy: String?
-    @Published private(set) var lastMessage: String?
+    /// Clears itself after a while, so an old "done" does not hide the last sync time.
+    @Published private(set) var lastMessage: String? { didSet { expireMessage() } }
+    private var messageExpiry: Task<Void, Never>?
     /// The login item's state. Each read asks another process, so it is read off the main
     /// thread (refreshResident) and views use these copies.
     @Published private(set) var resident = false
@@ -427,6 +429,16 @@ final class AgentLink: ObservableObject {
     }
 
     func clearMessages() { lastMessage = nil; lastError = nil }
+
+    private func expireMessage() {
+        messageExpiry?.cancel()
+        guard lastMessage != nil else { return }
+        messageExpiry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.lastMessage = nil
+        }
+    }
 
     func note(_ text: String) { lastMessage = text }
 

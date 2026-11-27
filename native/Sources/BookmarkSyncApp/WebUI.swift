@@ -26,6 +26,13 @@ struct SyncWebView: NSViewRepresentable {
         return web
     }
 
+    /// The page goes with the window: nothing of it should stay behind with the bridge.
+    static func dismantleNSView(_ web: WKWebView, coordinator: WebBridge) {
+        web.stopLoading()
+        web.configuration.userContentController.removeAllScriptMessageHandlers()
+        coordinator.web = nil
+    }
+
     func updateNSView(_ nsView: WKWebView, context: Context) {
         // The page reads the language itself on load, so a reload is the whole switch.
         if context.coordinator.langToken != link.langToken {

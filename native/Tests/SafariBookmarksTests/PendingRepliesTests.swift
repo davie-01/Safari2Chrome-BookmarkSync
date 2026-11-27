@@ -68,3 +68,22 @@ final class PendingRepliesTests: XCTestCase {
         XCTAssertEqual(eps?["b"]?["enabled"] as? Bool, false)
     }
 }
+
+final class LineReaderTests: XCTestCase {
+    /// Lines split across reads, several in one read, and one far larger than a read.
+    func testLinesWhateverTheReads() throws {
+        var fds: [Int32] = [0, 0]
+        XCTAssertEqual(pipe(&fds), 0)
+        let big = String(repeating: "x", count: 300_000)
+        let writer = Thread {
+            for part in ["a", "b\nc\nd", "\n", big, "\n", "e\n"] { _ = writeAll(fds[1], Data(part.utf8)) }
+            close(fds[1])
+        }
+        writer.start()
+        let reader = LineReader(fd: fds[0])
+        var lines: [String] = []
+        while let l = reader.next() { lines.append(String(decoding: l, as: UTF8.self)) }
+        close(fds[0])
+        XCTAssertEqual(lines, ["ab", "c", "d", big, "e"])
+    }
+}

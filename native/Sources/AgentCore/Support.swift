@@ -198,6 +198,10 @@ public func readExactly(_ fd: Int32, _ count: Int) -> Data? {
 public final class LineReader {
     private let fd: Int32
     private var buffer = Data()
+    /// Bytes at the front of `buffer` already searched: a long line arriving in many reads
+    /// is searched once, not again from its start after every read.
+    private var searched = 0
+    private var chunk = [UInt8](repeating: 0, count: 65536)
     private let maxLine: Int
 
     public init(fd: Int32, maxLine: Int = 256 * 1024 * 1024) {
@@ -207,14 +211,15 @@ public final class LineReader {
 
     public func next() -> Data? {
         while true {
-            if let i = buffer.firstIndex(of: 0x0A) {
+            if let i = buffer[(buffer.startIndex + searched)...].firstIndex(of: 0x0A) {
                 let line = buffer.subdata(in: buffer.startIndex..<i)
                 buffer.removeSubrange(buffer.startIndex...i)
+                searched = 0
                 return line
             }
+            searched = buffer.count
             if buffer.count > maxLine { return nil }
-            var chunk = [UInt8](repeating: 0, count: 65536)
-            let n = Darwin.read(fd, &chunk, chunk.count)
+            let n = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
             if n == 0 { return nil }
             if n < 0 { if errno == EINTR { continue }; return nil }
             buffer.append(contentsOf: chunk[0..<n])
