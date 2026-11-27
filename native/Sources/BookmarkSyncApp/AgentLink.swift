@@ -35,7 +35,7 @@ final class AgentLink: ObservableObject {
 
     private var fd: Int32 = -1
     private var seq = 0
-    private var pendingCalls: [Int: (Result<Any?, AgentError>) -> Void] = [:]
+    private let replies = PendingReplies(queue: .main)
     /// Writes only; the read loop gets a thread of its own so it cannot block them.
     private let io = DispatchQueue(label: "bmsync.app.link.write")
     private var connecting = false
@@ -171,19 +171,16 @@ final class AgentLink: ObservableObject {
         connected = false
         status = nil
         emit(["event": "agent.disconnected"])
-        for (_, cb) in pendingCalls { cb(.failure(AgentError("disconnected", t("与后台服务的连接断开")))) }
-        pendingCalls = [:]
+        replies.failAll(AgentError("disconnected", t("与后台服务的连接断开")))
         // a connection that lasted is a restart: try at once; one that died young backs off
         if Date().timeIntervalSince(connectedAt) > 30 { failures = 0; connect() } else { retryLater() }
     }
 
     private func receive(_ msg: [String: Any]) {
-        if let id = msg["id"] as? Int, let cb = pendingCalls.removeValue(forKey: id) {
-            if msg["ok"] as? Bool == true { cb(.success(msg["result"])) }
-            else {
-                let e = msg["error"] as? [String: Any]
-                cb(.failure(AgentError(e?["code"] as? String ?? "error", e?["message"] as? String ?? t("后台服务返回错误"))))
-            }
+        if let id = msg["id"] as? Int {
+            let e = msg["error"] as? [String: Any]
+            replies.resolve(id, msg["ok"] as? Bool == true ? .success(msg["result"])
+                : .failure(AgentError(e?["code"] as? String ?? "error", e?["message"] as? String ?? t("后台服务返回错误"))))
             return
         }
         guard let ev = msg["event"] as? String else { return }
@@ -204,7 +201,9 @@ final class AgentLink: ObservableObject {
         var req: [String: Any] = ["id": id, "type": type]
         if !params.isEmpty { req.merge(params) { a, _ in a } }
         guard let data = try? JSON.data(req) else { completion?(.failure(AgentError("encode", t("请求无法编码")))); return }
-        pendingCalls[id] = completion ?? { _ in }
+        // an agent that hangs without dropping the connection must not leave callers waiting forever
+        replies.add(id, timeout: PendingReplies.timeout(for: type),
+                    timedOut: AgentError("timeout", t("后台服务没有响应（{what}）", ["what": type])), completion ?? { _ in })
         let out = data + Data([0x0A])
         let c = fd
         io.async { _ = writeAll(c, out) }
@@ -300,19 +299,29 @@ final class AgentLink: ObservableObject {
     }
 
     /// Saves a settings patch (the engine deep-merges `endpoints`) and applies the result locally.
+    private var saveSeq = 0
+
     func save(_ patch: [String: Any], note: String? = nil) {
+        saveSeq += 1
+        let mine = saveSeq
+        // Shown at once: controls read their value back from `settings`, so waiting for the
+        // reply would make a toggle jump back and lose the second of two quick stepper clicks.
+        if let base = try? JSON.value(settings) as? [String: Any],
+           let applied: EngineSettings = decode(JSON.merging(base, patch)) { settings = applied }
         engine("saveSettings", ["patch": patch]) { [weak self] r in
             Task { @MainActor in
                 guard let self = self else { return }
                 switch r {
                 case .success(let v):
-                    if let s: EngineSettings = self.decode(v) {
+                    // an older reply would show a value a later save already changed
+                    if mine == self.saveSeq, let s: EngineSettings = self.decode(v) {
                         self.settings = s
                         self.applyLanguage(s.language)
                     }
                     if let note = note { self.lastMessage = note }
                 case .failure(let e):
                     self.lastError = t("保存设置失败：{msg}", ["msg": e.message])
+                    self.refresh() // back to what was actually kept
                 }
             }
         }

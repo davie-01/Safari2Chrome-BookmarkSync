@@ -843,7 +843,7 @@ for (const b of document.querySelectorAll('[data-bulk]')) {
 }
 
 backend.onEvent((m) => {
-  if (['safari.running', 'agent.connected', 'agent.disconnected', 'endpoints.changed', 'pending'].includes(m.event)) loadStatus();
+  if (['safari.running', 'agent.connected', 'agent.disconnected', 'endpoints.changed', 'settings.changed', 'pending'].includes(m.event)) loadStatus();
   if (m.event === 'autoRun' && m.result && !m.result.skipped) loadStatus();
   if (m.event === 'changed' && ui.scan) {
     $('#scan-meta-row').hidden = false;

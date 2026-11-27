@@ -640,6 +640,7 @@ public final class Agent {
     }
 
     func settingsChanged() {
+        broadcast(["event": "settings.changed"]) // the other UIs show the new settings
         scheduleAuto("settings")
         work.async { self.autoClean("settings") } // retention may have changed
     }

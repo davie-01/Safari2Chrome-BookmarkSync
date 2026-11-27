@@ -140,6 +140,16 @@ public enum JSON {
         return try JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])
     }
 
+    /// `patch` over `base`, nested objects merged key by key (how the engine applies a
+    /// settings patch).
+    public static func merging(_ base: [String: Any], _ patch: [String: Any]) -> [String: Any] {
+        var out = base
+        for (k, v) in patch {
+            if let p = v as? [String: Any], let b = out[k] as? [String: Any] { out[k] = merging(b, p) } else { out[k] = v }
+        }
+        return out
+    }
+
     public static func decode<T: Decodable>(_ type: T.Type, from value: Any) throws -> T {
         let d = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
         return try JSONDecoder().decode(T.self, from: d)
