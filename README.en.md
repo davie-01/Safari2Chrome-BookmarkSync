@@ -45,7 +45,7 @@ Or build it yourself:
 ```bash
 git clone https://github.com/davie-01/Safari2Chrome-BookmarkSync.git
 cd BookmarkSync
-scripts/build-app.sh        # builds, packages, installs into ~/Applications, registers the service
+scripts/build-app.sh        # builds, packages, installs into /Applications, registers the service
 ```
 
 ### 2. Full Disk Access
@@ -53,6 +53,8 @@ scripts/build-app.sh        # builds, packages, installs into ~/Applications, re
 macOS protects Safari's bookmark file. Open **System Settings → Privacy & Security → Full Disk Access**, add BookmarkSync and tick it, then press *Restart the service* on the app's Access page.
 
 (With an ad-hoc signature you have to tick it again after each rebuild.)
+
+Since 0.2.2 the script installs into `/Applications`. A copy left in `~/Applications` by earlier builds has its service unregistered and goes to the Trash during the install; sync state and backups stay.
 
 ### 3. The browser extension
 

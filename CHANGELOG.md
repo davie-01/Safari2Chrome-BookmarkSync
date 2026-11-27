@@ -36,6 +36,10 @@
   - 登录项在系统设置里被关闭（等待批准）时，App 不再继续同步，而是提示去批准。
   - 这两种情况都可以在「权限」页重启后台服务，或改为只在 App 打开时同步。
 
+### 开发与安装
+
+- `scripts/build-app.sh` 改为安装到 `/Applications`（原来是 `~/Applications`）。以前装在 `~/Applications` 的旧副本会在安装时注销后台服务、移到废纸篓，同步状态和备份不受影响。
+
 ## 0.2.1 — 2026-10-28
 
 这一版集中降低 CPU、内存和唤醒次数，并修复了几处同步与界面问题。分析过程和验证结果见 [docs/PERFORMANCE-AUDIT.md](docs/PERFORMANCE-AUDIT.md) 与 [docs/EVENT-DRIVEN-TIMER-OPTIMIZATION.md](docs/EVENT-DRIVEN-TIMER-OPTIMIZATION.md)。

@@ -45,7 +45,7 @@
 ```bash
 git clone https://github.com/davie-01/Safari2Chrome-BookmarkSync.git
 cd BookmarkSync
-scripts/build-app.sh        # 编译、打包、安装到 ~/Applications 并注册后台服务
+scripts/build-app.sh        # 编译、打包、安装到 /Applications 并注册后台服务
 ```
 
 ### 2. 给「完全磁盘访问权限」
@@ -53,6 +53,8 @@ scripts/build-app.sh        # 编译、打包、安装到 ~/Applications 并注�
 Safari 的书签文件受系统保护。打开 **系统设置 → 隐私与安全性 → 完全磁盘访问权限**，把 BookmarkSync 加进去并勾选，然后在 App 的「权限」页点「重启后台服务」。
 
 （每次重新编译安装后，如果用的是 ad-hoc 签名，这一项需要重新勾选。）
+
+从 0.2.2 起脚本安装到 `/Applications`。以前装在 `~/Applications` 的旧副本会在安装时注销后台服务、移到废纸篓，同步状态和备份不受影响。
 
 ### 3. 装浏览器扩展
 

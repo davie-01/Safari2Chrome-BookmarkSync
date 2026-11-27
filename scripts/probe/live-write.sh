@@ -1,6 +1,6 @@
 #!/bin/bash
 # 实测：Safari 运行时写入 Bookmarks.plist 的行为。用法：live-write.sh add|remove|watch <秒>
-B=~/Applications/BookmarkSync.app/Contents/MacOS/bmsync
+B=/Applications/BookmarkSync.app/Contents/MacOS/bmsync
 F=~/Library/Safari/Bookmarks.plist
 D="$(cd "$(dirname "$0")" && pwd)"; ST="$D/.probe-state"; mkdir -p "$ST"
 has() { python3 -c "import plistlib,sys;d=open('$F','rb').read();print('yes' if b'$1' in d or '$1' in str(plistlib.loads(d)) else 'no')"; }

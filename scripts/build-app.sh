@@ -1,5 +1,6 @@
 #!/bin/bash
-# 编译 bmsync，打包成 BookmarkSync.app，安装到 ~/Applications，并注册后台服务与 Chrome native host。
+# 编译 bmsync，打包成 BookmarkSync.app，安装到 /Applications，并注册后台服务与 Chrome native host。
+# 以前装在 ~/Applications 的旧副本会先注销并移到废纸篓（同步数据保留）。
 # 用法：scripts/build-app.sh [--no-install] [--test]
 #   CODESIGN_ID="Apple Development: ..."  指定签名身份（默认自动找 Apple Development，找不到则 ad-hoc）
 set -euo pipefail
@@ -7,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NATIVE="$ROOT/native"
 BUILD="$ROOT/build"
 APP_NAME="BookmarkSync.app"
-DEST_DIR="$HOME/Applications"
+DEST_DIR="/Applications"
 DEST="$DEST_DIR/$APP_NAME"
 DO_INSTALL=1
 DO_TEST=0
@@ -102,13 +103,33 @@ codesign --verify --strict --deep "$BUILD/$APP_NAME" && echo "✓ 签名校验�
 
 echo "==> 安装到 $DEST"
 mkdir -p "$DEST_DIR"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+# Builds before 0.2.2 installed into ~/Applications. Retire that copy first, or there are two
+# BookmarkSyncs (Login Items, Spotlight, Full Disk Access) and the old one's agent, finding
+# its bundle gone, would uninstall everything 15 minutes later. Its own uninstall only
+# unregisters the service it registered and removes its browser manifests: sync data stays.
+OLD_DEST="$HOME/Applications/$APP_NAME"
+if [ "$OLD_DEST" != "$DEST" ] && [ -d "$OLD_DEST" ]; then
+  echo "==> 移走旧位置的 $OLD_DEST"
+  pkill -TERM -f "$OLD_DEST/Contents/MacOS/" 2>/dev/null || true # its app, temporary agents, browser relays
+  sleep 1
+  open -W -n "$OLD_DEST" --args uninstall >/dev/null 2>&1 || true
+  launchctl bootout "gui/$(id -u)/com.mars.davie-01.BookmarkSync.sync" 2>/dev/null || true
+  # the resident agent runs as "BookmarkSync agent": find any still running from the old copy
+  for p in $(pgrep -f "BookmarkSync|bmsync" || true); do
+    exe="$(lsof -a -p "$p" -d txt -Fn 2>/dev/null | awk '/^n/ {print substr($0, 2); exit}')"
+    case "$exe" in "$OLD_DEST"/*) kill -KILL "$p" 2>/dev/null || true ;; esac
+  done
+  "$LSREGISTER" -u "$OLD_DEST" >/dev/null 2>&1 || true
+  mv "$OLD_DEST" "$HOME/.Trash/BookmarkSync-$(date +%Y%m%d-%H%M%S).app"
+fi
 launchctl kill TERM "gui/$(id -u)/com.mars.davie-01.BookmarkSync.agent" 2>/dev/null || true
 launchctl kill TERM "gui/$(id -u)/com.mars.davie-01.BookmarkSync.sync" 2>/dev/null || true
 launchctl kill TERM "gui/$(id -u)/local.bookmarksync.sync" 2>/dev/null || true
 rm -rf "$DEST"
 cp -R "$BUILD/$APP_NAME" "$DEST"
 # let LaunchServices know the bundle (name + icon for 登录项与扩展 / 完全磁盘访问权限)
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST" >/dev/null 2>&1 || true
+"$LSREGISTER" -f "$DEST" >/dev/null 2>&1 || true
 # register as the app itself (SMAppService refuses registrations attributed to Terminal)
 REG=$(mktemp); open -W -n --stdout "$REG" --stderr "$REG" "$DEST" --args install; cat "$REG"; rm -f "$REG"
 echo
