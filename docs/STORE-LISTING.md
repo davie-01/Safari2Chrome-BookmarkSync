@@ -31,7 +31,7 @@ dist/webstore/bookmarksync-extension-<版本>-webstore.zip
 | --- | --- |
 | 名称 | `BookmarkSync — 书签本机同步` |
 | 简短说明 | `在本机同步 Safari 与 Google Chrome™ 的书签：差异预览、逐项选择、冲突处理、双向或单向。不联网，不上传。` |
-| 类别 | 工作流与规划（Workflow & Planning） |
+| 类别 | 效率 › 工具（Productivity › Tools）。备选：工作流程与规划（Workflow & Planning） |
 | 主语言 | 中文（简体） |
 | 可见性 | **建议先选「不公开列出」(Unlisted)**，验证 ID 与本机通信都正常后再改公开 |
 
@@ -55,6 +55,7 @@ dist/webstore/bookmarksync-extension-<版本>-webstore.zip
 • 自动同步 —— 检测到改动后延迟几秒自动执行安全的项目。删除默认不自动执行，可单独开启并设单次上限；冲突和大范围重排永远等你确认。
 • 顺序也同步 —— 同一文件夹内的排列顺序，可指定以哪一端为准。
 • 写入很小心 —— 每次写入 Safari 书签前完整备份、保真校验、原子替换、写完复读校验。
+• 空闲时不占资源 —— 没有定时轮询。书签没有变化时，扩展和配套程序都处于静止等待，由书签改动、浏览器启动等事件唤醒。
 • 中英文界面，跟随系统或手动切换。
 
 【隐私】
@@ -75,7 +76,7 @@ https://github.com/davie-01/Safari2Chrome-BookmarkSync
 • 书签 —— 读取本浏览器书签以比较差异，并写入其他端的改动。这是核心功能。
 • 与本机应用通信 —— 与 BookmarkSync.app 交换数据。同步引擎和 Safari 书签读写都在那个程序里，浏览器扩展本身无法访问 Safari 的文件。
 • 存储 —— 保存本端标识和同步设置。
-• 闹钟 —— 书签变动后延迟几秒再同步，避免频繁操作时反复执行。
+• 闹钟 —— 配套程序暂时连不上时（例如刚重启），安排一次性的重连，间隔逐次拉长。连上后即清除，没有周期性闹钟。
 
 本扩展不申请访问网页内容的任何权限，也不向你浏览的页面注入脚本。
 
@@ -106,6 +107,7 @@ WHAT IT DOES
 • Automatic sync a few seconds after a change, for the safe cases. Deletions are off by default and have a per-run limit. Conflicts and large re-sorts always wait for you.
 • Folder order is synced too, with a configurable endpoint whose order wins.
 • Careful with Safari — a full backup before every write, a fidelity check, an atomic replace, and a re-read afterwards.
+• Idle when nothing changes — no polling. With no bookmark changes the extension and the app simply wait, woken by events such as a bookmark change or a browser starting.
 • English and Chinese, following the system or set by hand.
 
 PRIVACY
@@ -126,7 +128,7 @@ PERMISSIONS
 • Bookmarks — read this browser's bookmarks to compute differences, and write in changes from other endpoints. This is the core function.
 • Communicate with cooperating native applications — exchange data with BookmarkSync.app. The sync engine and all Safari bookmark access live in that app; a browser extension cannot reach Safari's files.
 • Storage — keep this endpoint's id and your sync settings.
-• Alarms — debounce: wait a few seconds after a bookmark change before syncing.
+• Alarms — when the companion app cannot be reached (say it is restarting), schedule a one-off reconnect attempt, waiting longer each time. Cleared once connected; nothing is scheduled periodically.
 
 The extension requests no access to the content of any page you visit and injects no scripts.
 
@@ -178,7 +180,9 @@ Keeping bookmarks consistent between Safari and Chromium browsers on the same co
 **`alarms`**
 
 ```
-用于延迟触发（debounce）。书签发生变动后等待几秒再执行同步，避免用户连续编辑时反复触发，也避免 service worker 被频繁唤醒。
+用于与配套程序的重连。配套程序暂时连不上时（例如刚重启或正在升级），扩展按逐次拉长的间隔重试：30 秒以内的等待用 setTimeout，30 秒及以上的等待用一次性的 chrome.alarms，因为 service worker 在长时间等待中可能被挂起，只有闹钟能在之后把它唤醒。闹钟只在连接失败后创建，连上后立即清除，不设置任何周期性闹钟，扩展空闲时不会被定时唤醒。
+
+English: Reconnecting to the companion app. When the app cannot be reached (restarting, being upgraded), the extension retries with growing waits: setTimeout for waits under 30 s, a one-off chrome.alarms alarm for longer ones, since the service worker may be suspended during a long wait and only an alarm wakes it again. An alarm is created only after a failed connection and cleared as soon as it connects; there are no periodic alarms.
 ```
 
 **远程代码（Remote code）**：选「不，我不使用远程代码」。扩展的全部代码都在包内，不加载任何外部脚本。
@@ -217,7 +221,7 @@ https://github.com/davie-01/Safari2Chrome-BookmarkSync/blob/main/PRIVACY.md
 这个扩展需要配合一个开源的 macOS 配套程序才能工作，单独安装扩展不会有任何功能表现。
 
 如需测试：
-1. 从 https://github.com/davie-01/Safari2Chrome-BookmarkSync/releases 下载 BookmarkSync.dmg 并安装（未经 Apple 公证，首次打开需在「系统设置 → 隐私与安全性」中放行）
+1. 从 https://github.com/davie-01/Safari2Chrome-BookmarkSync/releases 下载 BookmarkSync-1.0.0.dmg 并安装（未经 Apple 公证，首次打开需在「系统设置 → 隐私与安全性」中放行）
 2. 在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中为它打钩（读取 Safari 书签文件所必需）
 3. 安装本扩展后，点击工具栏图标即可看到两端书签的差异列表
 
