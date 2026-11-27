@@ -361,6 +361,15 @@
  "等待批准：在登录项设置里打开 BookmarkSync": "Waiting for approval: turn on BookmarkSync in Login Items settings",
  "正在尝试恢复；也可以到「权限」页重启后台服务。": "Trying to recover; you can also restart the background service on the Permissions page.",
  "后台服务没有响应（{what}）": "The background service did not answer ({what})",
+ "正在停止临时服务…": "Stopping the temporary service…",
+ "正在注销常驻服务…": "Unregistering the resident service…",
+ "正在注册常驻服务…": "Registering the resident service…",
+ "正在启动临时服务…": "Starting the temporary service…",
+ "正在等待后台服务启动…": "Waiting for the background service to start…",
+ "切换失败：{msg}": "Could not switch: {msg}",
+ "后台服务没有启动，详情见日志": "The background service did not start; see the log",
+ "正在切换后台服务…": "Switching the background service…",
+ "重试": "Retry",
  "改为只在 App 打开时同步": "Sync only while the app is open",
  "后台服务无法启动；打开主窗口或重启后台服务后会再试": "The background service cannot start; it will be tried again when you open the main window or restart the service"
 }

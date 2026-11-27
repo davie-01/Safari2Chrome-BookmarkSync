@@ -57,12 +57,14 @@ struct MainWindow: View {
     }
 
     private var dotColor: Color {
+        if link.switchingAgent { return .secondary }
         guard link.connected else { return .orange }
         if let s = link.status, !s.safariReadable || !s.engine { return .orange }
         return .green
     }
 
     private var subtitle: String {
+        if link.switchingAgent { return t("正在切换后台服务…") }
         if !link.connected { return t("后台服务未运行") }
         guard let s = link.status else { return t("已连接") }
         var parts = [t("版本 {v}", ["v": s.version]), link.resident ? t("常驻同步已开启") : t("仅在 App 打开时同步")]

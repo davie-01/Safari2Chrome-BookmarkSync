@@ -25,7 +25,20 @@ final class AgentLink: ObservableObject {
     /// thread (refreshResident) and views use these copies.
     @Published private(set) var resident = false
     @Published private(set) var residentNeedsApproval = false
-    @Published private(set) var residentChanging = false
+    /// Switching the resident service: the step it is on, or why it stopped.
+    enum ResidentSwitch: Equatable {
+        case idle
+        case working(String)
+        case failed(String, needsApproval: Bool)
+    }
+    @Published private(set) var residentSwitch = ResidentSwitch.idle
+    /// What the user asked for, shown by the toggle until the switch is over.
+    @Published private(set) var residentTarget: Bool?
+    private var lastResidentTarget = true
+    private var switchStartedAt = Date.distantFuture
+    /// Set once the service has been switched: the next connection completes the switch.
+    private var awaitingAgent = false
+    var switchingAgent: Bool { if case .working = residentSwitch { return true } else { return false } }
     @Published var tab: AppTab = .sync
     /// False while the window is closed (the app lives on in the menu bar): the
     /// embedded web UI is then torn down instead of living on in the background.
@@ -133,6 +146,8 @@ final class AgentLink: ObservableObject {
         connectedAt = Date()
         lastError = nil
         connectionProblem = nil
+        if awaitingAgent && connectedAt > switchStartedAt { finishSwitch() }
+        else if case .failed = residentSwitch { residentSwitch = .idle } // it works after all
         emit(["event": "agent.connected"])
         Thread.detachNewThread { [weak self] in
             let reader = LineReader(fd: c)
@@ -306,6 +321,7 @@ final class AgentLink: ObservableObject {
     func save(_ patch: [String: Any], note: String? = nil) {
         saveSeq += 1
         let mine = saveSeq
+        let before = settings
         // Shown at once: controls read their value back from `settings`, so waiting for the
         // reply would make a toggle jump back and lose the second of two quick stepper clicks.
         if let base = try? JSON.value(settings) as? [String: Any],
@@ -323,7 +339,8 @@ final class AgentLink: ObservableObject {
                     if let note = note { self.lastMessage = note }
                 case .failure(let e):
                     self.lastError = t("保存设置失败：{msg}", ["msg": e.message])
-                    self.refresh() // back to what was actually kept
+                    if mine == self.saveSeq { self.settings = before } // what was actually kept
+                    self.refresh()
                 }
             }
         }
@@ -462,34 +479,87 @@ final class AgentLink: ObservableObject {
         residentNeedsApproval = approval
     }
 
+    /// Switches the resident service, reporting each step (residentSwitch) instead of the
+    /// pages going grey while the agent is replaced. Done when an agent of the new kind is
+    /// connected; failed with the reason and what to do about it otherwise.
     func setResident(_ on: Bool) {
-        guard !residentChanging else { return }
-        residentChanging = true
+        guard !switchingAgent else { return }
+        residentTarget = on
+        lastResidentTarget = on
+        switchStartedAt = Date()
+        awaitingAgent = false
         AgentSupervisor.shared.forgetOutage()
         lastError = nil
         connectionProblem = nil
+        residentSwitch = .working(on ? t("正在停止临时服务…") : t("正在注销常驻服务…"))
         // registering, launchctl and stopping the temporary agent all block for a while
         Task.detached(priority: .userInitiated) { [weak self] in
-            let outcome: Result<String, Error> = AgentSupervisor.shared.changeResident(on: on) {
-                if on { AgentSupervisor.shared.stopTemporary() }
-                do { return .success(try Installer.setResident(on)) } catch { return .failure(error) }
+            AgentSupervisor.shared.beginResidentChange(on: on)
+            if on {
+                AgentSupervisor.shared.stopTemporary()
+                await self?.step(t("正在注册常驻服务…"))
             }
-            if !on { AgentSupervisor.shared.ensureRunning() }
+            let outcome: Result<String, Error>
+            do { outcome = .success(try Installer.setResident(on)) } catch { outcome = .failure(error) }
+            AgentSupervisor.shared.endResidentChange()
+            if !on, case .success = outcome {
+                await self?.step(t("正在启动临时服务…"))
+                AgentSupervisor.shared.ensureRunning()
+            }
             let enabled = Installer.residentEnabled, approval = Installer.residentNeedsApproval
-            await self?.residentChanged(outcome, enabled, approval)
+            await self?.residentChanged(on, outcome, enabled, approval)
         }
     }
 
-    private func residentChanged(_ outcome: Result<String, Error>, _ enabled: Bool, _ approval: Bool) {
-        residentChanging = false
-        connect() // attempts during the switch did nothing
+    func retryResidentSwitch() { setResident(lastResidentTarget) }
+
+    private func step(_ text: String) {
+        if switchingAgent { residentSwitch = .working(text) }
+    }
+
+    private func residentChanged(_ on: Bool, _ outcome: Result<String, Error>, _ enabled: Bool, _ approval: Bool) {
         setResidentState(enabled, approval)
-        switch outcome {
-        case .success(let line): lastMessage = line
-        case .failure(let e as AgentError): lastError = e.message
-        case .failure(let e): lastError = e.localizedDescription
+        if case .failure(let e) = outcome {
+            Log.warn("switching the resident service \(on ? "on" : "off") failed: \(e)")
+            return failSwitch(t("切换失败：{msg}", ["msg": (e as? AgentError)?.message ?? e.localizedDescription]))
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refresh() }
+        if on && approval { return failSwitch(t("等待批准：在登录项设置里打开 BookmarkSync"), needsApproval: true) }
+        if on { step(t("正在等待后台服务启动…")) }
+        if connected && connectedAt > switchStartedAt { return finishSwitch() }
+        awaitingAgent = true
+        connect() // attempts while the service was switching did nothing
+        let started = switchStartedAt
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard let self = self, self.awaitingAgent, self.switchStartedAt == started else { return }
+            self.failSwitch(t("后台服务没有启动，详情见日志"))
+        }
+    }
+
+    private func finishSwitch() {
+        awaitingAgent = false
+        residentTarget = nil
+        residentSwitch = .idle
+        refresh()
+    }
+
+    private func failSwitch(_ why: String, needsApproval: Bool = false) {
+        awaitingAgent = false
+        residentTarget = nil
+        residentSwitch = .failed(why, needsApproval: needsApproval)
+    }
+
+    /// The resident service's line under its toggle: the step, the failure, or what it does.
+    var residentNote: (text: String, warning: Bool)? {
+        switch residentSwitch {
+        case .working(let s): return (s, false)
+        case .failed(let s, _): return (s, true)
+        case .idle: return residentNeedsApproval ? (t("等待批准：在登录项设置里打开 BookmarkSync"), true) : nil
+        }
+    }
+
+    static func openLoginItems() {
+        if let u = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(u) }
     }
 
     /// Restarts whichever agent is running, so it picks up a changed Safari path.

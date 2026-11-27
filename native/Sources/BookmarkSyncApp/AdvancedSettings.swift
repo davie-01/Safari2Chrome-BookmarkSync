@@ -101,7 +101,7 @@ struct AdvancedPage: View {
             }
         }
         .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10)
-        .disabled(!link.connected)
+        .disabled(!link.connected && !link.switchingAgent)
         .onAppear { link.refreshStorage() }
         .alert(t("清理旧文件？"), isPresented: Binding(get: { confirmClean != nil }, set: { if !$0 { confirmClean = nil } })) {
             Button(t("取消"), role: .cancel) { confirmClean = nil }

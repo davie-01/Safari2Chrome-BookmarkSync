@@ -30,10 +30,18 @@ final class AgentSupervisor {
     /// While this app switches the resident service, its state is in flux: act on nothing.
     private var changing = false
 
-    /// Wraps switching the resident service on or off from this app.
-    func changeResident<T>(on: Bool, _ body: () throws -> T) rethrows -> T {
+    /// Brackets switching the resident service on or off from this app.
+    func beginResidentChange(on: Bool) {
         lock.lock(); changing = true; userTurnedOff = !on; lock.unlock()
-        defer { lock.lock(); changing = false; lock.unlock() }
+    }
+
+    func endResidentChange() {
+        lock.lock(); changing = false; lock.unlock()
+    }
+
+    func changeResident<T>(on: Bool, _ body: () throws -> T) rethrows -> T {
+        beginResidentChange(on: on)
+        defer { endResidentChange() }
         return try body()
     }
 

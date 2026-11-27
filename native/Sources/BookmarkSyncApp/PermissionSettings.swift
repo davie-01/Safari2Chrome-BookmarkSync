@@ -10,45 +10,58 @@ struct PermissionsPage: View {
     @State private var notifications = t("检查中…")
     @State private var notificationsOK = false
 
+    /// Cards on the page background, like the other pages (a grouped Form has its own).
     var body: some View {
-        Form {
-            Section {
-                PermissionRow(
-                    title: t("完全磁盘访问权限"),
-                    ok: link.status?.safariReadable ?? false,
-                    detail: detailFullDisk,
-                    action: (t("打开系统设置"), { open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") }))
-                Text(t("macOS 把 Safari 的书签文件列为受保护数据。把 BookmarkSync.app 加进这一项并勾选，然后点下面的「重启后台服务」。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Button(t("重启后台服务")) { link.restartAgent() }
-            }
-            Section {
-                PermissionRow(
-                    title: t("后台运行"),
-                    ok: link.resident && !link.residentNeedsApproval,
-                    detail: link.residentNeedsApproval ? t("等待批准：在登录项设置里打开 BookmarkSync")
-                        : link.resident ? t("已注册，登录时自动启动") : t("未注册：只有 BookmarkSync 打开时才同步"),
-                    action: (t("打开登录项设置"), { open("x-apple.systempreferences:com.apple.LoginItems-Settings.extension") }))
-                if link.resident && !link.connected {
-                    // the setting for this needs a connection; this is the way out without one
-                    Button(t("改为只在 App 打开时同步")) { link.setResident(false) }
-                        .disabled(link.residentChanging)
+        VStack(spacing: 14) {
+            Card {
+                VStack(alignment: .leading, spacing: 8) {
+                    PermissionRow(
+                        title: t("完全磁盘访问权限"),
+                        ok: link.status?.safariReadable ?? false,
+                        detail: detailFullDisk,
+                        action: (t("打开系统设置"), { open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") }))
+                    Text(t("macOS 把 Safari 的书签文件列为受保护数据。把 BookmarkSync.app 加进这一项并勾选，然后点下面的「重启后台服务」。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(t("重启后台服务")) { link.restartAgent() }
+                        .disabled(link.switchingAgent)
                 }
-                PermissionRow(
-                    title: t("浏览器扩展连接"),
-                    ok: link.endpoints.contains { !$0.isSafari && $0.isOnline },
-                    detail: extensionDetail,
-                    action: (t("刷新"), { link.refresh() }))
-                PermissionRow(
-                    title: t("通知"),
-                    ok: notificationsOK,
-                    detail: notifications,
-                    action: (t("请求授权"), { requestNotifications() }))
-                Text(t("通知用于同步失败或有项目需要确认时提醒你，可以不授权。"))
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            Card {
+                VStack(alignment: .leading, spacing: 8) {
+                    PermissionRow(
+                        title: t("后台运行"),
+                        ok: link.resident && !link.residentNeedsApproval && link.residentNote == nil,
+                        detail: link.residentNote?.text ?? (link.resident ? t("已注册，登录时自动启动") : t("未注册：只有 BookmarkSync 打开时才同步")),
+                        warning: link.residentNote?.warning ?? false,
+                        busy: link.switchingAgent,
+                        action: (t("打开登录项设置"), { AgentLink.openLoginItems() }))
+                    if case .failed(_, let needsApproval) = link.residentSwitch, !needsApproval {
+                        Button(t("重试")) { link.retryResidentSwitch() }
+                    }
+                    if link.resident && !link.connected && !link.switchingAgent {
+                        // the setting for this needs a connection; this is the way out without one
+                        Button(t("改为只在 App 打开时同步")) { link.setResident(false) }
+                    }
+                    Divider()
+                    PermissionRow(
+                        title: t("浏览器扩展连接"),
+                        ok: link.endpoints.contains { !$0.isSafari && $0.isOnline },
+                        detail: extensionDetail,
+                        action: (t("刷新"), { link.refresh() }))
+                    Divider()
+                    PermissionRow(
+                        title: t("通知"),
+                        ok: notificationsOK,
+                        detail: notifications,
+                        action: (t("请求授权"), { requestNotifications() }))
+                    Text(t("通知用于同步失败或有项目需要确认时提醒你，可以不授权。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
         }
-        .formStyle(.grouped)
+        .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10)
         .onAppear { link.refresh(); checkNotifications() }
     }
 
@@ -93,15 +106,25 @@ struct PermissionRow: View {
     let title: String
     let ok: Bool
     let detail: String
+    var warning = false
+    /// Something is in progress: a spinner where the ok/attention mark goes.
+    var busy = false
     let action: (String, () -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle")
-                .foregroundStyle(ok ? Color.green : Color.orange)
+            Group {
+                if busy { ProgressView().controlSize(.small) }
+                else {
+                    Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .foregroundStyle(ok ? Color.green : Color.orange)
+                }
+            }
+            .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.caption).foregroundStyle(warning ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if let a = action { Button(a.0) { a.1() } }

@@ -30,7 +30,7 @@ struct EndpointsPage: View {
             Spacer(minLength: 0)
         }
         .padding(20)
-        .disabled(!link.connected)
+        .disabled(!link.connected && !link.switchingAgent)
     }
 }
 
@@ -87,10 +87,17 @@ struct RulesPage: View {
                 Card {
                     VStack(spacing: 8) {
                         CardTitle(t("后台"))
-                        SettingRow(t("常驻后台同步"), note: link.residentNeedsApproval ? t("等待批准：在登录项设置里打开 BookmarkSync") : link.resident ? t("登录时自动启动，浏览器没开也同步") : t("只在 App 打开时同步，退出后不留进程")) {
-                            Toggle("", isOn: Binding(get: { link.resident }, set: { link.setResident($0) })).labelsHidden()
-                                .disabled(link.residentChanging)
+                        SettingRow(t("常驻后台同步"),
+                                   note: link.residentNote?.text ?? (link.resident ? t("登录时自动启动，浏览器没开也同步") : t("只在 App 打开时同步，退出后不留进程")),
+                                   warning: link.residentNote?.warning ?? false) {
+                            HStack(spacing: 8) {
+                                if link.switchingAgent { ProgressView().controlSize(.small) }
+                                Toggle("", isOn: Binding(get: { link.residentTarget ?? link.resident }, set: { link.setResident($0) }))
+                                    .labelsHidden()
+                                    .disabled(link.switchingAgent)
+                            }
                         }
+                        ResidentSwitchActions()
                         Divider()
                         SettingRow(t("显示菜单栏图标"), note: t("关掉后，关闭窗口就会退出 App")) {
                             Toggle("", isOn: $menuBar).labelsHidden()
@@ -121,11 +128,26 @@ struct RulesPage: View {
         }
         .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10)
         .toggleStyle(.switch)
-        .disabled(!link.connected)
+        .disabled(!link.connected && !link.switchingAgent)
     }
 
     private func bind(_ key: KeyPath<EngineSettings, Bool>, _ name: String) -> Binding<Bool> {
         Binding(get: { link.settings[keyPath: key] }, set: { link.save([name: $0]) })
+    }
+}
+
+/// What can be done about a failed switch of the resident service, right under it.
+struct ResidentSwitchActions: View {
+    @EnvironmentObject var link: AgentLink
+
+    var body: some View {
+        if case .failed(_, let needsApproval) = link.residentSwitch {
+            HStack {
+                Spacer()
+                if needsApproval { Button(t("打开登录项设置")) { AgentLink.openLoginItems() } }
+                else { Button(t("重试")) { link.retryResidentSwitch() } }
+            }
+        }
     }
 }
 
@@ -141,11 +163,13 @@ struct CardTitle: View {
 struct SettingRow<Control: View>: View {
     let title: String
     var note: String?
+    var noteIsWarning = false
     @ViewBuilder var control: Control
 
-    init(_ title: String, note: String? = nil, @ViewBuilder control: () -> Control) {
+    init(_ title: String, note: String? = nil, warning: Bool = false, @ViewBuilder control: () -> Control) {
         self.title = title
         self.note = note
+        self.noteIsWarning = warning
         self.control = control()
     }
 
@@ -154,7 +178,7 @@ struct SettingRow<Control: View>: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                 if let n = note {
-                    Text(n).font(.caption).foregroundStyle(.secondary)
+                    Text(n).font(.caption).foregroundStyle(noteIsWarning ? Color.orange : Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
