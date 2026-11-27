@@ -115,6 +115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { self.updateQuitTitle() }
         }
+        // Announced before the system's quit events, in case one comes without its reason.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { _ in
+            AppDelegate.quitting = true
+        }
         // The main window closed: drop the web UI; back as soon as it is key again.
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { n in
             MainActor.assumeIsolated { if AppDelegate.isMainWindow(n.object) { AgentLink.shared.uiVisible = false } }
@@ -124,6 +128,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The quit Apple Event says why it was sent; the system's own reasons are the ones that
+    /// must quit for real.
+    static func systemIsQuitting() -> Bool {
+        guard let ev = NSAppleEventManager.shared().currentAppleEvent,
+              ev.eventClass == AEEventClass(kCoreEventClass), ev.eventID == AEEventID(kAEQuitApplication) else { return false }
+        let key = AEKeyword(kAEQuitReason)
+        guard let why = (ev.attributeDescriptor(forKeyword: key) ?? ev.paramDescriptor(forKeyword: key))?.enumCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAEShowShutdownDialog, kAERestart, kAEShutDown]
+            .map { OSType($0) }.contains(why)
+    }
+
     static func isMainWindow(_ object: Any?) -> Bool {
         guard let w = object as? NSWindow else { return false }
         return w.canBecomeMain && w.title == "BookmarkSync"
@@ -131,7 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Without the menu bar icon there would be no way back, so then ⌘Q really quits.
-        guard !AppDelegate.quitting, MenuBarPref.enabled else { return .terminateNow }
+        // Logging out, restarting and shutting down go through here too: never hold them up.
+        guard !AppDelegate.quitting, MenuBarPref.enabled, !AppDelegate.systemIsQuitting() else { return .terminateNow }
         DispatchQueue.main.async {
             for w in NSApp.windows where w.isVisible && w.canBecomeMain { w.orderOut(nil) }
             AgentLink.shared.uiVisible = false // tears down the web view (memory, background refreshes)
