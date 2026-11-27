@@ -59,6 +59,8 @@ const handlers = {
   pending: async () => (await native('kv.get', { key: 'pending' })) || null,
   lastRun: async () => (await native('kv.get', { key: 'lastRun' })) || null,
   isRunning: async () => ({ running: coordinator.running }),
+  offlineEndpoints: () => coordinator.offlineEndpoints(),
+  forgetEndpoint: (p) => coordinator.forgetEndpoint(p.id),
   canonicalize: async (p) => ({ href: canonicalize(p.url) }),
 };
 

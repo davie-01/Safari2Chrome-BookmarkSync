@@ -5,6 +5,7 @@ import AgentCore
 
 struct EndpointsPage: View {
     @EnvironmentObject var link: AgentLink
+    @State private var forgetting: OfflineEndpoint?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -27,10 +28,51 @@ struct EndpointsPage: View {
                 Spacer()
                 Button(t("刷新")) { link.refresh() }
             }
+            if !link.offlineEndpoints.isEmpty {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        CardTitle(t("已离线的端"))
+                        Text(t("同步记录里有、现在没有连上的浏览器。浏览器只是关着的话，打开后会自动回来；扩展已删除或换了 ID 的，可以移除。"))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(link.offlineEndpoints) { ep in
+                            Divider()
+                            HStack(spacing: 10) {
+                                Circle().fill(Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(ep.name)
+                                    Text(offlineDetail(ep)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(t("移除…")) { forgetting = ep }
+                            }
+                        }
+                    }
+                }
+            }
             Spacer(minLength: 0)
         }
         .padding(20)
         .disabled(!link.connected && !link.switchingAgent)
+        .alert(t("移除「{name}」？", ["name": forgetting?.name ?? ""]),
+               isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button(t("取消"), role: .cancel) { forgetting = nil }
+            Button(t("移除"), role: .destructive) {
+                if let ep = forgetting { link.forgetEndpoint(ep) }
+                forgetting = nil
+            }
+        } message: {
+            Text(t("只删除这一端的同步记录和设置，不会动任何书签。以后它再连上，会按新加入的一端处理：相同的书签自动配对，其余合并，不会删除。"))
+        }
+    }
+
+    /// When it last synced, and enough of its ID to tell two of the same browser apart.
+    private func offlineDetail(_ ep: OfflineEndpoint) -> String {
+        let id = t("ID {id}…", ["id": String(ep.id.prefix(11))])
+        guard let ms = ep.lastSyncAt ?? ep.firstSeenAt else { return id }
+        let f = DateFormatter.ui("M月d日 HH:mm", "MMM d, HH:mm")
+        let when = f.string(from: Date(timeIntervalSince1970: ms / 1000))
+        return (ep.lastSyncAt != nil ? t("上次同步 {when}", ["when": when]) : t("首次出现 {when}", ["when": when])) + " · " + id
     }
 }
 

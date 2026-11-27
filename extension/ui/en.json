@@ -372,6 +372,17 @@
  "重试": "Retry",
  "正在重启后台服务…": "Restarting the background service…",
  "等待后台服务…": "Waiting for the background service…",
+ "已离线的端": "Offline endpoints",
+ "同步记录里有、现在没有连上的浏览器。浏览器只是关着的话，打开后会自动回来；扩展已删除或换了 ID 的，可以移除。": "Browsers the sync remembers that are not connected now. One that is only closed comes back when it opens; one whose extension was removed or got a new ID can be removed.",
+ "移除…": "Remove…",
+ "移除「{name}」？": "Remove “{name}”?",
+ "移除": "Remove",
+ "只删除这一端的同步记录和设置，不会动任何书签。以后它再连上，会按新加入的一端处理：相同的书签自动配对，其余合并，不会删除。": "Only this endpoint's sync records and settings go; no bookmark is touched. Should it connect again it joins as a new endpoint: matching bookmarks pair up, the rest merge, nothing is deleted.",
+ "已移除「{name}」的同步记录": "Removed the sync records of “{name}”",
+ "「{name}」现在连着，不能移除": "“{name}” is connected and cannot be removed",
+ "移除失败：{msg}": "Could not remove: {msg}",
+ "ID {id}…": "ID {id}…",
+ "首次出现 {when}": "First seen {when}",
  "改为只在 App 打开时同步": "Sync only while the app is open",
  "后台服务无法启动；打开主窗口或重启后台服务后会再试": "The background service cannot start; it will be tried again when you open the main window or restart the service"
 }

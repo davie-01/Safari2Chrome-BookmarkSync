@@ -51,6 +51,15 @@ enum SyncMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// A browser endpoint the sync state remembers but that is not connected now.
+struct OfflineEndpoint: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var browser: String?
+    var lastSyncAt: Double?
+    var firstSeenAt: Double?
+}
+
 struct EndpointInfo: Codable, Identifiable, Hashable {
     var id: String
     var kind: String

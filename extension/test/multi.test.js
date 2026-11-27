@@ -345,3 +345,30 @@ test('multi: a new endpoint that already agrees saves its pairing on the first s
   assert.equal((await w.coord.scan()).firstSync, false);
   await assertConverged(w);
 });
+
+test('multi: an offline endpoint is listed and can be forgotten; a connected one cannot', async () => {
+  const w = makeWorld();
+  w.safari.add('root:bar', 'A', 'https://a.test/');
+  await sync(w, resolveAll);
+  await w.coord.saveSettings({ endpoints: { edge: { mode: 'receive' } }, orderMaster: 'edge' });
+  w.online.edge = false;
+  assert.deepEqual((await w.coord.offlineEndpoints()).map((e) => e.id), ['edge']);
+  await assert.rejects(w.coord.forgetEndpoint('chrome'), { code: 'endpointOnline' });
+  await assert.rejects(w.coord.forgetEndpoint('safari'), { code: 'badRequest' });
+  const before = await flats(w);
+  assert.deepEqual(await w.coord.forgetEndpoint('edge'), { removed: true });
+  assert.equal(w.store.state.endpoints.edge, undefined);
+  const s = await w.coord.settings();
+  assert.equal(s.endpoints.edge, undefined);
+  assert.equal(s.orderMaster, null);
+  assert.deepEqual(await w.coord.offlineEndpoints(), []);
+  // nothing was written anywhere, and the rest still syncs
+  assert.deepEqual(await flats(w), before);
+  w.safari.add('root:bar', 'B', 'https://b.test/');
+  await sync(w, resolveAll);
+  await assertConverged(w, ['safari', 'chrome']);
+  // back again: it joins as a new endpoint, alike bookmarks pair, nothing is deleted
+  w.online.edge = true;
+  const again = await w.coord.scan();
+  assert.ok(again.items.every((i) => i.type !== 'delete'), JSON.stringify(again.items.map((i) => i.type)));
+});

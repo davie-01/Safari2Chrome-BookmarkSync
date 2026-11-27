@@ -87,6 +87,48 @@ export class Coordinator {
     return chrome[0]?.id || all.find((e) => e.kind === 'chromium')?.id || 'safari';
   }
 
+  /** Endpoints the sync state remembers that are not connected now: a browser that is
+   *  closed, or a profile or extension copy that is gone for good (removed, or reloaded
+   *  under another ID). Safari is always local and never listed. */
+  async offlineEndpoints() {
+    const { state } = await this.loadState();
+    const online = new Set((await this.deps.endpoints.list()).filter((e) => e.online).map((e) => e.id));
+    return Object.entries(state.endpoints)
+      .filter(([id, e]) => id !== 'safari' && e.kind !== 'safari' && !online.has(id))
+      .map(([id, e]) => ({ id, name: e.name || id, browser: e.browser || null, lastSyncAt: e.lastSyncAt ?? null, firstSeenAt: e.firstSeenAt ?? null }))
+      .sort((a, b) => (b.lastSyncAt ?? b.firstSeenAt ?? 0) - (a.lastSyncAt ?? a.firstSeenAt ?? 0));
+  }
+
+  /** Forgets an offline endpoint: its pairing and its settings. No bookmark is touched;
+   *  should it connect again it joins like a new one (alike bookmarks pair, the rest merge). */
+  async forgetEndpoint(id) {
+    if (!id || id === 'safari') throw Object.assign(new Error('only a browser endpoint can be removed'), { code: 'badRequest' });
+    if (this.running) throw Object.assign(new Error('a sync is already running'), { code: 'busy' });
+    const all = await this.deps.endpoints.list();
+    if (all.some((e) => e.id === id && e.online)) {
+      throw Object.assign(new Error('this endpoint is connected; close that browser or remove the extension first'), { code: 'endpointOnline' });
+    }
+    this.running = true;
+    try {
+      const { state, revision } = await this.loadState();
+      const known = !!state.endpoints[id];
+      if (known) {
+        delete state.endpoints[id];
+        await this.deps.store.save(state, revision);
+      }
+      const s = await this.settings();
+      if (s.endpoints[id] || s.orderMaster === id) {
+        delete s.endpoints[id];
+        if (s.orderMaster === id) s.orderMaster = null;
+        await this.deps.settings.save(s);
+      }
+      this.scans.clear(); // they hold the state from before
+      return { removed: known };
+    } finally {
+      this.running = false;
+    }
+  }
+
   async loadState() {
     const { state, revision } = await this.deps.store.load();
     return { state: migrateState(state) || emptyState(), revision };

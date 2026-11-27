@@ -11,6 +11,7 @@ final class AgentLink: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var status: AgentStatus?
     @Published private(set) var pending: PendingInfo?
+    @Published private(set) var offlineEndpoints: [OfflineEndpoint] = []
     @Published var settings = EngineSettings()
     @Published private(set) var settingsLoaded = false
     @Published private(set) var lastError: String?
@@ -311,6 +312,12 @@ final class AgentLink: ObservableObject {
                 self.pending = self.decode(v)
             }
         }
+        engine("offlineEndpoints") { [weak self] r in
+            Task { @MainActor in
+                guard let self = self, case .success(let v) = r else { return }
+                self.offlineEndpoints = self.decode(v) ?? []
+            }
+        }
         refreshStorage()
         engine("lastRun") { [weak self] r in
             Task { @MainActor in
@@ -348,6 +355,21 @@ final class AgentLink: ObservableObject {
                     if mine == self.saveSeq { self.settings = before } // what was actually kept
                     self.refresh()
                 }
+            }
+        }
+    }
+
+    /// Drops an offline endpoint's pairing and settings; no bookmark is touched.
+    func forgetEndpoint(_ ep: OfflineEndpoint) {
+        engine("forgetEndpoint", ["id": ep.id]) { [weak self] r in
+            Task { @MainActor in
+                guard let self = self else { return }
+                switch r {
+                case .success: self.lastMessage = t("已移除「{name}」的同步记录", ["name": ep.name])
+                case .failure(let e) where e.code == "endpointOnline": self.lastError = t("「{name}」现在连着，不能移除", ["name": ep.name])
+                case .failure(let e): self.lastError = t("移除失败：{msg}", ["msg": e.message])
+                }
+                self.refresh()
             }
         }
     }
