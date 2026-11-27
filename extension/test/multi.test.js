@@ -327,3 +327,21 @@ test('multi: run with rescan returns the post-run scan without reading every end
   // runs without rescan (auto, the app's menu) carry no scan
   assert.equal((await w.coord.run(fresh.scanId, {})).scan, undefined);
 });
+
+test('multi: a new endpoint that already agrees saves its pairing on the first scan (no endless "first sync")', async () => {
+  const w = makeWorld();
+  w.online.edge = false;
+  w.safari.add('root:bar', 'A', 'https://a.test/');
+  w.safari.add('root:bar', 'B', 'https://b.test/');
+  await sync(w, resolveAll);
+  // a new profile (or the extension under a new ID) with the very same bookmarks joins
+  w.browsers.edge.add('1', 'A', 'https://a.test/');
+  w.browsers.edge.add('1', 'B', 'https://b.test/');
+  w.online.edge = true;
+  const s = await w.coord.scan();
+  assert.equal(s.items.length, 0, JSON.stringify(s.items.map((i) => i.type)));
+  assert.equal(s.firstSync, false, 'pairing saved, so this is no longer a first sync');
+  assert.ok(Object.keys(w.store.state.endpoints.edge.pair.mappings).length);
+  assert.equal((await w.coord.scan()).firstSync, false);
+  await assertConverged(w);
+});

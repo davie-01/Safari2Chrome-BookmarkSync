@@ -136,7 +136,16 @@ export class Coordinator {
 
   async scan() {
     const snap = await this.snapshot();
-    return this.remember(snap, this.compute(snap, {}));
+    const view = this.remember(snap, this.compute(snap, {}));
+    // Everything already agrees, but an endpoint seen for the first time has no pairing saved
+    // yet, and only a run saves it: without one this would be a "first sync" forever. A run
+    // with nothing to do writes no bookmarks and no history line.
+    if (!view.items.length && view.firstSync && !this.running) {
+      const r = await this.run(view.scanId, {}, { rescan: true });
+      if (r.ok && r.scan) return r.scan;
+      return this.remember(snap, this.compute(snap, {})); // the run used up the first scanId
+    }
+    return view;
   }
 
   /** Registers a computed snapshot as a scan the UI can preview and run. */
