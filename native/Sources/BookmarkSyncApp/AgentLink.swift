@@ -470,9 +470,10 @@ final class AgentLink: ObservableObject {
         connectionProblem = nil
         // registering, launchctl and stopping the temporary agent all block for a while
         Task.detached(priority: .userInitiated) { [weak self] in
-            if on { AgentSupervisor.shared.stopTemporary() }
-            let outcome: Result<String, Error>
-            do { outcome = .success(try Installer.setResident(on)) } catch { outcome = .failure(error) }
+            let outcome: Result<String, Error> = AgentSupervisor.shared.changeResident(on: on) {
+                if on { AgentSupervisor.shared.stopTemporary() }
+                do { return .success(try Installer.setResident(on)) } catch { return .failure(error) }
+            }
             if !on { AgentSupervisor.shared.ensureRunning() }
             let enabled = Installer.residentEnabled, approval = Installer.residentNeedsApproval
             await self?.residentChanged(outcome, enabled, approval)
@@ -481,6 +482,7 @@ final class AgentLink: ObservableObject {
 
     private func residentChanged(_ outcome: Result<String, Error>, _ enabled: Bool, _ approval: Bool) {
         residentChanging = false
+        connect() // attempts during the switch did nothing
         setResidentState(enabled, approval)
         switch outcome {
         case .success(let line): lastMessage = line

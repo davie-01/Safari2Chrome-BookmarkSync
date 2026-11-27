@@ -37,6 +37,14 @@ final class AgentStartPolicyTests: XCTestCase {
         XCTAssertEqual(actions, [.wait, .restartResident, .wait, .reregisterResident, .reportCannotStart])
     }
 
+    /// A re-registration reads as off for a moment; a temporary agent started then would take
+    /// the lock from the resident one coming up.
+    func testABriefOffIsNotTheUsersChoice() {
+        XCTAssertEqual(AgentStartPolicy.next(.off, downFor: 0, tried: 0, offFor: 0), .wait)
+        XCTAssertEqual(AgentStartPolicy.next(.off, downFor: 1, tried: 0, offFor: 1.9), .wait)
+        XCTAssertEqual(AgentStartPolicy.next(.off, downFor: 4, tried: 0, offFor: 2), .startTemporary)
+    }
+
     func testOtherStates() {
         XCTAssertEqual(next(0, .off), .startTemporary)
         XCTAssertEqual(next(0, .needsApproval), .reportNeedsApproval) // launchd will not run it; repairing cannot help

@@ -79,11 +79,13 @@ public final class Log {
         try? Paths.ensureDir(directory)
         let current = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
         if current > Log.maxBytes { rotateFileLocked() }
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
-        }
-        handle = try? FileHandle(forWritingTo: url)
-        size = Int(handle?.seekToEndOfFile() ?? 0)
+        // Append mode: two processes may share a log (a temporary and a resident agent for a
+        // moment, the app and its agent's start-up), and each write must land at the end
+        // instead of at a position of its own, over the other's lines.
+        let fd = Darwin.open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
+        handle = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : nil
+        var st = stat()
+        size = fd >= 0 && fstat(fd, &st) == 0 ? Int(st.st_size) : 0
     }
 
     private func rotateFileLocked() {

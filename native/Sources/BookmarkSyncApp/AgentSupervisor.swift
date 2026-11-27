@@ -22,13 +22,30 @@ final class AgentSupervisor {
     /// When the agent we are waiting for went away, and the repair steps taken since.
     private var downSince: Date?
     private var tried = 0
+    /// An "off" read once an agent was reachable may be a re-registration halfway (see
+    /// AgentStartPolicy.offSettles); one the user chose in this app is not.
+    private var everReachable = false
+    private var offSince: Date?
+    private var userTurnedOff = false
+    /// While this app switches the resident service, its state is in flux: act on nothing.
+    private var changing = false
+
+    /// Wraps switching the resident service on or off from this app.
+    func changeResident<T>(on: Bool, _ body: () throws -> T) rethrows -> T {
+        lock.lock(); changing = true; userTurnedOff = !on; lock.unlock()
+        defer { lock.lock(); changing = false; lock.unlock() }
+        return try body()
+    }
 
     /// Does what the current outage calls for (see AgentStartPolicy) and returns what the user
     /// should be told, if anything. The caller retries with backoff and the socket's appearance
     /// wakes it sooner. May block on launchctl: call it off the main thread.
     @discardableResult
     func ensureRunning() -> String? {
+        lock.lock(); let busy = changing; lock.unlock()
+        if busy { return nil } // the switch connects again when it is done
         if agentReachable() {
+            lock.lock(); everReachable = true; lock.unlock()
             forgetOutage()
             return nil
         }
@@ -37,7 +54,9 @@ final class AgentSupervisor {
         let now = Date()
         if downSince == nil { downSince = now; tried = 0 }
         let downFor = now.timeIntervalSince(downSince ?? now)
-        let action = AgentStartPolicy.next(state, downFor: downFor, tried: tried)
+        if state == .off { offSince = offSince ?? now } else { offSince = nil; userTurnedOff = false }
+        let offFor = userTurnedOff || !everReachable ? .infinity : now.timeIntervalSince(offSince ?? now)
+        let action = AgentStartPolicy.next(state, downFor: downFor, tried: tried, offFor: offFor)
         if action == .restartResident || action == .reregisterResident { tried += 1 }
         lock.unlock()
         switch action {
@@ -46,7 +65,7 @@ final class AgentSupervisor {
         case .reregisterResident:
             // an upgrade can leave a stale service record that only registering again clears
             Log.warn("resident agent still down after \(Int(downFor)) s: registering it again")
-            do { Log.info(try Installer.setResident(true)) }
+            do { Log.info(try changeResident(on: true) { try Installer.setResident(true) }) }
             catch { Log.warn("cannot register the resident agent: \(error.localizedDescription)") }
         case .startTemporary: startTemporary()
         case .reportNeedsApproval:

@@ -70,18 +70,26 @@ struct RootApp: App {
 @MainActor func showMainWindow(_ tab: AppTab? = nil) {
     if let tab = tab { AgentLink.shared.tab = tab }
     AgentLink.shared.uiVisible = true
+    // From the menu bar the app is an accessory (no Dock icon), is not the active app and its
+    // menu is still closing. Asking to be activated right then can be declined, and a window
+    // ordered front by an inactive app stays behind the active app's windows. So: become a
+    // regular app, let that and the menu settle for a turn of the run loop, then open, activate
+    // and, should activation still be declined, put the window in front regardless.
     NSApp.setActivationPolicy(.regular)
-    if let open = MainWindowOpener.open {
-        open(id: "main")
-    } else if let w = mainWindow() {
-        w.makeKeyAndOrderFront(nil)
-    }
-    NSApp.activate()
-    // openWindow may build the window on the next turn of the run loop
     DispatchQueue.main.async {
-        guard let w = mainWindow() else { return }
-        w.makeKeyAndOrderFront(nil)
-        w.makeFirstResponder(nil)
+        if let open = MainWindowOpener.open {
+            open(id: "main")
+        } else if let w = mainWindow() {
+            w.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        // openWindow may build the window on the next turn of the run loop
+        DispatchQueue.main.async {
+            guard let w = mainWindow() else { return }
+            w.makeKeyAndOrderFront(nil)
+            if !NSApp.isActive { w.orderFrontRegardless() }
+            w.makeFirstResponder(nil)
+        }
     }
 }
 

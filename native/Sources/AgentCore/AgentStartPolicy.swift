@@ -14,11 +14,16 @@ public enum AgentStartPolicy {
     /// launchd holds a respawn back by up to 10 s (its throttle interval).
     public static let reregisterAfter: TimeInterval = 12
     public static let giveUpAfter: TimeInterval = 30
+    /// Registering the service again (an install, an upgrade) unregisters it first: for a
+    /// moment it reads as off. Only an "off" that lasts is the user's choice.
+    public static let offSettles: TimeInterval = 2
 
-    /// `tried`: repair steps already taken in this outage.
-    public static func next(_ state: ResidentState, downFor: TimeInterval, tried: Int) -> Action {
+    /// `tried`: repair steps already taken in this outage. `offFor`: how long the service has
+    /// read as off; infinite when that is known to be settled (the user just turned it off here,
+    /// or the app has not seen an agent yet).
+    public static func next(_ state: ResidentState, downFor: TimeInterval, tried: Int, offFor: TimeInterval = .infinity) -> Action {
         switch state {
-        case .off: return .startTemporary
+        case .off: return offFor >= offSettles ? .startTemporary : .wait
         case .needsApproval: return .reportNeedsApproval
         case .on:
             switch tried {
