@@ -76,7 +76,7 @@ The window has five tabs:
 
 The first sync merges the endpoints (identical bookmarks are paired automatically) and deletes nothing.
 
-The menu bar icon syncs on demand and reopens the window. ⌘Q just closes the window — syncing continues — and *Quit BookmarkSync* in the menu bar icon really quits.
+The menu bar icon syncs on demand and reopens the window. Closing the window (⌘W) leaves the app in the menu bar; ⌘Q quits it. With the resident background sync on, syncing continues after quitting.
 
 ## Uninstall
 

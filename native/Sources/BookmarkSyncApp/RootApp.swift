@@ -65,7 +65,7 @@ struct RootApp: App {
     static var open: OpenWindowAction?
 }
 
-/// Brings the single window back (⌘Q hides it, the red button closes it) and optionally
+/// Brings the single window back (closed with ⌘W or the red button, or hidden) and optionally
 /// switches page.
 @MainActor func showMainWindow(_ tab: AppTab? = nil) {
     if let tab = tab { AgentLink.shared.tab = tab }
@@ -94,66 +94,34 @@ enum MenuBarPref {
     static var enabled: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
 }
 
+/// ⌘Q quits, as everywhere else; closing the window (⌘W, the red button) puts the app away in
+/// the menu bar, or quits it when there is no menu bar icon to come back through.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Only the menu bar's t("退出 BookmarkSync") really quits; ⌘Q just puts the app away.
-    private static var quitting = false
-
-    static func reallyQuit() {
-        quitting = true
-        NSApp.terminate(nil)
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("app UI started (\(AppInfo.version))")
         AgentLink.shared.start()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            self.updateQuitTitle()
             NSApp.windows.first(where: { $0.isVisible })?.makeFirstResponder(nil)
         }
-        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { self.updateQuitTitle() }
-        }
-        // Announced before the system's quit events, in case one comes without its reason.
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { _ in
-            AppDelegate.quitting = true
-        }
-        // The main window closed: drop the web UI; back as soon as it is key again.
+        // The main window closed: drop the web UI and, living in the menu bar from now on,
+        // the Dock icon. Both come back as soon as the window is key again.
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { n in
-            MainActor.assumeIsolated { if AppDelegate.isMainWindow(n.object) { AgentLink.shared.uiVisible = false } }
+            MainActor.assumeIsolated {
+                guard AppDelegate.isMainWindow(n.object) else { return }
+                AgentLink.shared.uiVisible = false
+                if MenuBarPref.enabled { NSApp.setActivationPolicy(.accessory) }
+            }
         }
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { n in
             MainActor.assumeIsolated { if AppDelegate.isMainWindow(n.object) { AgentLink.shared.uiVisible = true } }
         }
     }
 
-    /// The quit Apple Event says why it was sent; the system's own reasons are the ones that
-    /// must quit for real.
-    static func systemIsQuitting() -> Bool {
-        guard let ev = NSAppleEventManager.shared().currentAppleEvent,
-              ev.eventClass == AEEventClass(kCoreEventClass), ev.eventID == AEEventID(kAEQuitApplication) else { return false }
-        let key = AEKeyword(kAEQuitReason)
-        guard let why = (ev.attributeDescriptor(forKeyword: key) ?? ev.paramDescriptor(forKeyword: key))?.enumCodeValue else { return false }
-        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAEShowShutdownDialog, kAERestart, kAEShutDown]
-            .map { OSType($0) }.contains(why)
-    }
-
     static func isMainWindow(_ object: Any?) -> Bool {
         guard let w = object as? NSWindow else { return false }
         return w.canBecomeMain && w.title == "BookmarkSync"
-    }
-
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Without the menu bar icon there would be no way back, so then ⌘Q really quits.
-        // Logging out, restarting and shutting down go through here too: never hold them up.
-        guard !AppDelegate.quitting, MenuBarPref.enabled, !AppDelegate.systemIsQuitting() else { return .terminateNow }
-        DispatchQueue.main.async {
-            for w in NSApp.windows where w.isVisible && w.canBecomeMain { w.orderOut(nil) }
-            AgentLink.shared.uiVisible = false // tears down the web view (memory, background refreshes)
-            NSApp.setActivationPolicy(.accessory) // no Dock icon while it lives in the menu bar
-        }
-        return .terminateCancel
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -163,16 +131,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { MainActor.assumeIsolated { showMainWindow() } }
         return true
-    }
-
-    /// Say what ⌘Q will actually do.
-    func updateQuitTitle() {
-        guard let appMenu = NSApp.mainMenu?.items.first?.submenu,
-              let item = appMenu.items.last(where: {
-                  $0.action == #selector(NSApplication.terminate(_:))
-                      || ($0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command])
-              }) else { return }
-        item.title = MenuBarPref.enabled ? t("关闭界面（后台继续同步）") : t("退出 BookmarkSync")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -195,6 +153,6 @@ struct MenuBarMenu: View {
         Button(t("打开主窗口")) { MainWindowOpener.open = openWindow; showMainWindow(.sync) }
         Button(t("设置…")) { MainWindowOpener.open = openWindow; showMainWindow(.rules) }
         Divider()
-        Button(t("退出 BookmarkSync")) { AppDelegate.reallyQuit() }
+        Button(t("退出 BookmarkSync")) { NSApp.terminate(nil) }
     }
 }

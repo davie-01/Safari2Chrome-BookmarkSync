@@ -27,7 +27,7 @@ final class AgentLink: ObservableObject {
     @Published private(set) var residentNeedsApproval = false
     @Published private(set) var residentChanging = false
     @Published var tab: AppTab = .sync
-    /// False while the window is put away (⌘Q with the menu bar icon, or closed): the
+    /// False while the window is closed (the app lives on in the menu bar): the
     /// embedded web UI is then torn down instead of living on in the background.
     @Published var uiVisible = true
     @Published private(set) var lastRunAt: Date?

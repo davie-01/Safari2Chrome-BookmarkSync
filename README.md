@@ -78,7 +78,7 @@ Safari 的书签文件受系统保护。打开 **系统设置 → 隐私与安�
 
 首次同步会把各端合并（相同书签自动配对），默认不删除任何东西。
 
-菜单栏图标可以随时「立即同步」或打开主窗口；⌘Q 只收起窗口，后台继续同步，真正退出走菜单栏图标里的「退出」。
+菜单栏图标可以随时「立即同步」或打开主窗口；关闭窗口（⌘W）后 App 留在菜单栏，⌘Q 退出 App；开着常驻后台同步时，退出 App 也不影响同步。
 
 ## 卸载
 
@@ -160,7 +160,7 @@ BookmarkSync/
 │       │   ├── Uninstall.swift        卸载清单、执行与残留检查
 │       │   └── Support.swift          标识、路径、日志、JSON 与 socket 工具
 │       ├── BookmarkSyncApp/  SwiftUI App（同一个二进制加 agent 参数就是后台服务）
-│       │   ├── RootApp.swift          窗口与菜单栏、⌘Q 行为
+│       │   ├── RootApp.swift          窗口与菜单栏
 │       │   ├── StatusView.swift       主窗口外壳、分段栏、同步页
 │       │   ├── SettingsView.swift     端与规则两页
 │       │   ├── PermissionSettings.swift  权限页

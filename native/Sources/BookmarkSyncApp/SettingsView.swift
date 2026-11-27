@@ -92,7 +92,7 @@ struct RulesPage: View {
                                 .disabled(link.residentChanging)
                         }
                         Divider()
-                        SettingRow(t("显示菜单栏图标"), note: t("关掉后 ⌘Q 会变成真正退出")) {
+                        SettingRow(t("显示菜单栏图标"), note: t("关掉后，关闭窗口就会退出 App")) {
                             Toggle("", isOn: $menuBar).labelsHidden()
                         }
                     }

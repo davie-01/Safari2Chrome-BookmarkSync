@@ -144,7 +144,7 @@ struct AdvancedPage: View {
             Text(uninstallSummary)
         }
         .alert(t("卸载完成"), isPresented: Binding(get: { uninstallReport != nil }, set: { if !$0 { uninstallReport = nil } })) {
-            Button(t("退出")) { AppDelegate.reallyQuit() }
+            Button(t("退出")) { NSApp.terminate(nil) }
         } message: {
             Text(reportSummary)
         }
