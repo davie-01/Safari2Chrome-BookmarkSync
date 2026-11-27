@@ -63,3 +63,25 @@ final class AgentStartPolicyTests: XCTestCase {
         XCTAssertEqual(env, ["HOME": "/h"])
     }
 }
+
+final class ExtensionIDTests: XCTestCase {
+    /// A list saved before the store ID existed must not keep the store extension out.
+    func testSavedIDsGainTheKnownOnes() {
+        let ids = Installer.withKnownIDs(["dllnilcheahcklaiheddleegbdalbcjn"])
+        XCTAssertTrue(ids.contains(Installer.defaultExtensionID))
+        XCTAssertTrue(ids.contains("dllnilcheahcklaiheddleegbdalbcjn"))
+        XCTAssertEqual(Set(ids).count, ids.count)
+        XCTAssertEqual(Installer.withKnownIDs(["abc"]).first, "abc") // one added by hand stays
+    }
+
+    func testManifestKeyGivesTheStoreID() throws {
+        let manifest = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("extension/manifest.json")
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
+        let der = try XCTUnwrap(Data(base64Encoded: json?["key"] as? String ?? ""))
+        let hex = sha256Hex(der).prefix(32)
+        let id = String(hex.map { c in Character(UnicodeScalar(UInt8(ascii: "a") + UInt8(c.hexDigitValue!))) })
+        XCTAssertEqual(id, Installer.defaultExtensionID)
+    }
+}

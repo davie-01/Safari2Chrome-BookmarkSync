@@ -60,7 +60,7 @@ Since 1.0.0 the script installs into `/Applications`. A copy left in `~/Applicat
 
 Download `bookmarksync-extension-x.y.z.zip` from the release and unzip it, or use the `extension/` directory from this repository. Then, in the browser: open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked** and pick that directory.
 
-The extension ID is fixed (`dllnilcheahcklaiheddleegbdalbcjn`), so it survives reinstalls.
+The extension ID is fixed (`eikjhejilbjkpaldcigpmeebhnpcgbmi`, the same as the Chrome Web Store version), so it survives reinstalls. Versions before 1.0.1 used `dllnilcheahcklaiheddleegbdalbcjn`; the app still lets that ID in, and reloading from a newer `extension/` switches to the new one.
 
 Install it once per browser, and once per profile — each profile is its own endpoint.
 

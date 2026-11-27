@@ -3,8 +3,12 @@ import ServiceManagement
 
 /// Registers the LaunchAgent and the Chrome native messaging host manifest.
 public enum Installer {
-    /// Fixed ID derived from the public key in extension/manifest.json ("key").
-    public static let defaultExtensionID = "dllnilcheahcklaiheddleegbdalbcjn"
+    /// The extension's ID in the Chrome Web Store, which the public key in
+    /// extension/manifest.json ("key") gives an unpacked copy too.
+    public static let defaultExtensionID = "eikjhejilbjkpaldcigpmeebhnpcgbmi"
+    /// IDs it had before: a copy loaded unpacked from an older checkout keeps its ID until it
+    /// is reloaded from a newer one, and must still be let in.
+    public static let legacyExtensionIDs = ["dllnilcheahcklaiheddleegbdalbcjn"]
 
     /// The CLI/agent/native-host binary inside the bundle. From the SwiftUI app the bundle
     /// executable is BookmarkSync, so the manifests and the LaunchAgent must point at `bmsync`.
@@ -89,13 +93,21 @@ public enum Installer {
 
     static var extensionIDsFile: URL { Paths.support.appendingPathComponent("extension-ids.json") }
 
+    /// The IDs saved by the last install (any the user added by hand), plus the known ones:
+    /// a list saved by an older version must not keep a newer ID out.
     static func storedExtensionIDs() -> [String] {
-        if let d = try? Data(contentsOf: extensionIDsFile), let a = try? JSONDecoder().decode([String].self, from: d), !a.isEmpty { return a }
-        return [defaultExtensionID]
+        let saved = (try? Data(contentsOf: extensionIDsFile)).flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
+        return withKnownIDs(saved)
+    }
+
+    static func withKnownIDs(_ ids: [String]) -> [String] {
+        var out = ids.filter { !$0.isEmpty }
+        for id in [defaultExtensionID] + legacyExtensionIDs where !out.contains(id) { out.append(id) }
+        return out
     }
 
     public static func install(extensionIDs: [String], launchAgent: Bool = true) throws -> [String] {
-        let extensionIDs = extensionIDs.isEmpty ? storedExtensionIDs() : extensionIDs
+        let extensionIDs = withKnownIDs(extensionIDs.isEmpty ? storedExtensionIDs() : extensionIDs)
         var report: [String] = []
         let exe = helperPath
         if !exe.contains(".app/Contents/MacOS/") {

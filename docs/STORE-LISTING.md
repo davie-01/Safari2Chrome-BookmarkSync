@@ -8,6 +8,8 @@ Developer Dashboard 各字段的填写内容，可直接复制。改动扩展时
 
 拿 ID 和提交审核**必须分两步**，顺序错了会让已安装的用户连不上后台服务：
 
+> 进度（2026-11-27）：第 1、2 步已完成，应用店 ID 为 `eikjhejilbjkpaldcigpmeebhnpcgbmi`，代码改动在 1.0.1。
+
 1. **上传草稿，不提交审核** → 从 Package 标签复制公钥、记下 Item ID
 2. **改代码**：manifest 的 `key` 换成商店公钥，`Installer.swift` 的 `defaultExtensionID` 换成新 ID，并在 `allowed_origins` 里**同时保留旧 ID**
 3. **发布 app 新版本**（带着新 ID 的 native messaging 配置）

@@ -62,7 +62,7 @@ Safari 的书签文件受系统保护。打开 **系统设置 → 隐私与安�
 
 浏览器地址栏打开 `chrome://extensions` → 打开右上角「开发者模式」→「加载已解压的扩展程序」→ 选择这个目录。
 
-扩展 ID 是固定的（`dllnilcheahcklaiheddleegbdalbcjn`），换机器、重装都不变。
+扩展 ID 是固定的（`eikjhejilbjkpaldcigpmeebhnpcgbmi`，和 Chrome 应用店版本相同），换机器、重装都不变。1.0.1 之前的版本用的是 `dllnilcheahcklaiheddleegbdalbcjn`，App 仍然允许它连接；从新版本的 `extension/` 重新加载后，ID 会变成新的。
 
 多个浏览器就在每个浏览器里各装一次；同一浏览器的多个用户配置也各装一次，它们在 BookmarkSync 里是各自独立的端。
 
