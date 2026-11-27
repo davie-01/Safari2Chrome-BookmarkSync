@@ -371,6 +371,7 @@
  "正在切换后台服务…": "Switching the background service…",
  "重试": "Retry",
  "正在重启后台服务…": "Restarting the background service…",
+ "等待后台服务…": "Waiting for the background service…",
  "改为只在 App 打开时同步": "Sync only while the app is open",
  "后台服务无法启动；打开主窗口或重启后台服务后会再试": "The background service cannot start; it will be tried again when you open the main window or restart the service"
 }

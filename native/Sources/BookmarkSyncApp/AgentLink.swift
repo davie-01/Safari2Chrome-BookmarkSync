@@ -358,8 +358,16 @@ final class AgentLink: ObservableObject {
 
     // MARK: actions
 
+    /// Asked for while the agent was being replaced: runs once the new one is there.
+    private var syncAfterSwitch = false
+
     func syncNow() {
         guard busy == nil else { return }
+        if !connected && switchingAgent {
+            syncAfterSwitch = true
+            busy = t("等待后台服务…")
+            return
+        }
         busy = t("正在扫描…")
         engine("scan") { [weak self] r in
             Task { @MainActor in
@@ -562,6 +570,7 @@ final class AgentLink: ObservableObject {
         operation = nil
         residentSwitch = .idle
         refresh()
+        if syncAfterSwitch { syncAfterSwitch = false; busy = nil; syncNow() }
     }
 
     private func failSwitch(_ why: String, needsApproval: Bool = false) {
@@ -569,6 +578,7 @@ final class AgentLink: ObservableObject {
         residentTarget = nil
         restartFromPid = nil
         residentSwitch = .failed(why, needsApproval: needsApproval)
+        if syncAfterSwitch { syncAfterSwitch = false; busy = nil }
     }
 
     /// The resident service's line under its toggle: the step, the failure, or what it does.

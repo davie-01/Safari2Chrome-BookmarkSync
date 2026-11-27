@@ -50,7 +50,8 @@ struct MainWindow: View {
             if link.busy != nil { ProgressView().controlSize(.small) }
             Button(action: { link.syncNow() }) { Text(link.busy ?? t("立即同步")).frame(minWidth: 76) }
                 .buttonStyle(.borderedProminent)
-                .disabled(link.busy != nil || !link.connected)
+                // not while the agent is only being replaced: a click then waits for the new one
+                .disabled(link.busy != nil || (!link.connected && !link.switchingAgent))
                 .keyboardShortcut("r")
         }
         .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 12)
