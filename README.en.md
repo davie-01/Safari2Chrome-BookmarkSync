@@ -54,7 +54,7 @@ macOS protects Safari's bookmark file. Open **System Settings → Privacy & Secu
 
 (With an ad-hoc signature you have to tick it again after each rebuild.)
 
-Since 0.2.2 the script installs into `/Applications`. A copy left in `~/Applications` by earlier builds has its service unregistered and goes to the Trash during the install; sync state and backups stay.
+Since 1.0.0 the script installs into `/Applications`. A copy left in `~/Applications` by earlier builds has its service unregistered and goes to the Trash during the install; sync state and backups stay.
 
 ### 3. The browser extension
 

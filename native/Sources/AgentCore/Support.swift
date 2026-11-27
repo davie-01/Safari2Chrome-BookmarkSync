@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 public enum AppInfo {
-    public static let version = "0.2.2"
+    public static let version = "1.0.0"
     /// Labels and identifiers from the pre-open-source builds; install and uninstall still
     /// clean these up so an upgrade doesn't leave two services behind.
     public static let legacyBundleID = "local.bookmarksync"

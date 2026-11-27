@@ -141,7 +141,7 @@ fi
 echo "==> 安装到 $DEST"
 mkdir -p "$DEST_DIR"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-# Builds before 0.2.2 installed into ~/Applications. Retire that copy first, or there are two
+# Builds before 1.0.0 installed into ~/Applications. Retire that copy first, or there are two
 # BookmarkSyncs (Login Items, Spotlight, Full Disk Access) and the old one's agent, finding
 # its bundle gone, would uninstall everything 15 minutes later. Its own uninstall only
 # unregisters the service it registered and removes its browser manifests: sync data stays.

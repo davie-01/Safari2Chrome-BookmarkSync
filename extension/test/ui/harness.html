@@ -37,7 +37,7 @@
   const f = B['cr-edge'].add('2', 'Edge 新建文件夹'); B['cr-edge'].add(f, 'MDN', 'https://developer.mozilla.org/'); B['cr-edge'].add(f, 'Can I use', 'https://caniuse.com/');
   const eb = B['cr-edge'].nodes.get('1'); eb.children.reverse();
   const handlers = {
-    status: async () => ({ endpointId: 'cr-chrome', agent: { version: '0.2.2', engine: true, safariAccess: 'ok', safariRunning: true, endpoints: eps.map(({ id, kind, browser, name, online }) => ({ id, kind, browser, name, online })) }, settings: await coord.settings(), pending: mem.get('pending') }),
+    status: async () => ({ endpointId: 'cr-chrome', agent: { version: '1.0.0', engine: true, safariAccess: 'ok', safariRunning: true, endpoints: eps.map(({ id, kind, browser, name, online }) => ({ id, kind, browser, name, online })) }, settings: await coord.settings(), pending: mem.get('pending') }),
     scan: () => coord.scan(), preview: (m) => coord.preview(m.scanId, m.choices), run: (m) => coord.run(m.scanId, m.choices, { rescan: m.rescan }),
     settings: () => coord.settings(), saveSettings: (m) => coord.saveSettings(m.patch), history: async () => mem.get('history') || [],
     storage: async () => ({ backups: { count: 14, bytes: 4_300_000, oldest: Date.now() - 86400000 * 12 }, logs: { count: 3, bytes: 220_000, oldest: Date.now() - 86400000 * 30 }, state: { bytes: 114_245 } }),
