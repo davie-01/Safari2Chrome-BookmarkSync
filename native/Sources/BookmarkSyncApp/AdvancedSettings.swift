@@ -10,6 +10,7 @@ struct AdvancedPage: View {
     @State private var confirmClearHistory = false
     @State private var uninstallPlan: [Uninstall.Item]?
     @State private var uninstallReport: Uninstall.Report?
+    @State private var uninstalling = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -88,7 +89,11 @@ struct AdvancedPage: View {
                     VStack(alignment: .leading, spacing: 8) {
                         CardTitle(t("卸载"))
                         SettingRow(t("从这台 Mac 上彻底移除"), note: t("后台服务、连接配置、状态、备份、日志全部删除；扩展请自行删除")) {
-                            Button(t("卸载…"), role: .destructive) { uninstallPlan = Uninstall.plan() }
+                            Button(t("卸载…"), role: .destructive) {
+                                // sizes every folder it would remove
+                                Task.detached { let plan = Uninstall.plan(); await MainActor.run { uninstallPlan = plan } }
+                            }
+                            .disabled(uninstalling)
                         }
                     }
                 }
@@ -128,8 +133,12 @@ struct AdvancedPage: View {
             Button(t("取消"), role: .cancel) { uninstallPlan = nil }
             Button(t("卸载"), role: .destructive) {
                 uninstallPlan = nil
-                AgentSupervisor.shared.stopTemporary()
-                uninstallReport = Uninstall.run(trashApp: true)
+                uninstalling = true
+                Task.detached {
+                    AgentSupervisor.shared.stopTemporary()
+                    let report = Uninstall.run(trashApp: true)
+                    await MainActor.run { uninstalling = false; uninstallReport = report }
+                }
             }
         } message: {
             Text(uninstallSummary)
@@ -189,13 +198,19 @@ struct AdvancedPage: View {
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
             target = url.appendingPathComponent("Bookmarks.plist")
         }
-        do { _ = try SafariStore(url: target).readNormalized() }
-        catch {
-            link.note(t("这个文件读不出书签：{err}", ["err": "\(error)"]))
-            return
+        // parsing a whole bookmarks file: not on the main thread
+        Task.detached {
+            let problem: String?
+            do { _ = try SafariStore(url: target).readNormalized(); problem = nil } catch { problem = "\(error)" }
+            await MainActor.run {
+                if let problem = problem {
+                    link.note(t("这个文件读不出书签：{err}", ["err": problem]))
+                    return
+                }
+                link.save(["safariPath": target.path], note: t("已设置 Safari 书签位置，正在重启后台服务"))
+                link.restartAgent()
+            }
         }
-        link.save(["safariPath": target.path], note: t("已设置 Safari 书签位置，正在重启后台服务"))
-        link.restartAgent()
     }
 }
 

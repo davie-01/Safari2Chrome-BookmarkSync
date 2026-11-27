@@ -93,17 +93,25 @@ final class AgentSupervisor {
         // no wait here: the app connects when the agent's socket appears
     }
 
-    func stopTemporary() {
+    /// Stops the temporary agent and waits for it to exit, so a resident one can take the
+    /// lock: off the main thread. `wait: false` at quit, where it goes by itself anyway once
+    /// our end of its stdin closes.
+    func stopTemporary(wait: Bool = true) {
         lock.lock()
         let p = child
         child = nil
         lifeline = nil
         lock.unlock()
-        guard let p = p, p.isRunning else { return }
+        guard let p = p else { return }
+        let gone = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in gone.signal() } // set first: an exit after the check still signals
+        guard p.isRunning else { return }
         p.terminate()
-        let deadline = Date().addingTimeInterval(2)
-        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-        if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        guard wait else { return }
+        if gone.wait(timeout: .now() + 2) == .timedOut {
+            kill(p.processIdentifier, SIGKILL)
+            _ = gone.wait(timeout: .now() + 1)
+        }
     }
 
     func restartTemporary() {

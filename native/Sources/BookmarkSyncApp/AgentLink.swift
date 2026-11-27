@@ -19,7 +19,11 @@ final class AgentLink: ObservableObject {
     @Published private(set) var connectionProblem: String?
     @Published private(set) var busy: String?
     @Published private(set) var lastMessage: String?
-    @Published private(set) var resident = Installer.residentEnabled
+    /// The login item's state. Each read asks another process, so it is read off the main
+    /// thread (refreshResident) and views use these copies.
+    @Published private(set) var resident = false
+    @Published private(set) var residentNeedsApproval = false
+    @Published private(set) var residentChanging = false
     @Published var tab: AppTab = .sync
     /// False while the window is put away (⌘Q with the menu bar icon, or closed): the
     /// embedded web UI is then torn down instead of living on in the background.
@@ -68,9 +72,11 @@ final class AgentLink: ObservableObject {
         }
         if !w.start() { Log.warn("cannot watch \(Paths.support.path); reconnecting on retries only") }
         socketWatcher = w
+        // also when coming back from System Settings, where the login item may have changed
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.connect() }
+            MainActor.assumeIsolated { self?.connect(); self?.refreshResident() }
         }
+        refreshResident()
         connect()
     }
 
@@ -266,9 +272,9 @@ final class AgentLink: ObservableObject {
                 case .failure(let e):
                     self.lastError = e.message
                 }
-                self.resident = Installer.residentEnabled
             }
         }
+        refreshResident()
         engine("settings") { [weak self] r in
             Task { @MainActor in
                 guard let self = self, case .success(let v) = r, let s: EngineSettings = self.decode(v) else { return }
@@ -423,22 +429,42 @@ final class AgentLink: ObservableObject {
 
     // MARK: resident service
 
+    func refreshResident() {
+        Task.detached(priority: .utility) { [weak self] in
+            let on = Installer.residentEnabled, approval = Installer.residentNeedsApproval
+            await self?.setResidentState(on, approval)
+        }
+    }
+
+    private func setResidentState(_ on: Bool, _ approval: Bool) {
+        resident = on
+        residentNeedsApproval = approval
+    }
+
     func setResident(_ on: Bool) {
-        do {
-            AgentSupervisor.shared.forgetOutage()
-            lastError = nil
-            connectionProblem = nil
+        guard !residentChanging else { return }
+        residentChanging = true
+        AgentSupervisor.shared.forgetOutage()
+        lastError = nil
+        connectionProblem = nil
+        // registering, launchctl and stopping the temporary agent all block for a while
+        Task.detached(priority: .userInitiated) { [weak self] in
             if on { AgentSupervisor.shared.stopTemporary() }
-            let line = try Installer.setResident(on)
-            resident = Installer.residentEnabled
-            lastMessage = line
+            let outcome: Result<String, Error>
+            do { outcome = .success(try Installer.setResident(on)) } catch { outcome = .failure(error) }
             if !on { AgentSupervisor.shared.ensureRunning() }
-        } catch let e as AgentError {
-            lastError = e.message
-            resident = Installer.residentEnabled
-        } catch {
-            lastError = error.localizedDescription
-            resident = Installer.residentEnabled
+            let enabled = Installer.residentEnabled, approval = Installer.residentNeedsApproval
+            await self?.residentChanged(outcome, enabled, approval)
+        }
+    }
+
+    private func residentChanged(_ outcome: Result<String, Error>, _ enabled: Bool, _ approval: Bool) {
+        residentChanging = false
+        setResidentState(enabled, approval)
+        switch outcome {
+        case .success(let line): lastMessage = line
+        case .failure(let e as AgentError): lastError = e.message
+        case .failure(let e): lastError = e.localizedDescription
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refresh() }
     }

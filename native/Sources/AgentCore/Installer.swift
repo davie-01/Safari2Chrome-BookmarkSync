@@ -244,8 +244,9 @@ public enum Installer {
         p.standardOutput = pipe
         p.standardError = pipe
         do { try p.run() } catch { return (-1, "\(error)") }
-        p.waitUntilExit()
+        // read until it closes the pipe, then wait: a full pipe would stall it forever
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
         return (p.terminationStatus, out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

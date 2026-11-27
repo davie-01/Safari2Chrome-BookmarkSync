@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        AgentSupervisor.shared.stopTemporary()
+        AgentSupervisor.shared.stopTemporary(wait: false)
     }
 }
 

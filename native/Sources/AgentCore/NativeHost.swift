@@ -51,8 +51,9 @@ public enum NativeHost {
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
-        p.waitUntilExit()
+        // read until it closes the pipe, then wait: a full pipe would stall it forever
         let s = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        p.waitUntilExit()
         return (s?.isEmpty ?? true) ? nil : s
     }
 
