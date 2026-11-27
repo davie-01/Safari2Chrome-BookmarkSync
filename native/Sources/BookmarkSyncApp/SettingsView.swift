@@ -91,7 +91,7 @@ struct RulesPage: View {
                                    note: link.residentNote?.text ?? (link.resident ? t("登录时自动启动，浏览器没开也同步") : t("只在 App 打开时同步，退出后不留进程")),
                                    warning: link.residentNote?.warning ?? false) {
                             HStack(spacing: 8) {
-                                if link.switchingAgent { ProgressView().controlSize(.small) }
+                                if link.switchingAgent && link.operation == .switchResident { ProgressView().controlSize(.small) }
                                 Toggle("", isOn: Binding(get: { link.residentTarget ?? link.resident }, set: { link.setResident($0) }))
                                     .labelsHidden()
                                     .disabled(link.switchingAgent)
@@ -141,7 +141,7 @@ struct ResidentSwitchActions: View {
     @EnvironmentObject var link: AgentLink
 
     var body: some View {
-        if case .failed(_, let needsApproval) = link.residentSwitch {
+        if link.operation == .switchResident, case .failed(_, let needsApproval) = link.residentSwitch {
             HStack {
                 Spacer()
                 if needsApproval { Button(t("打开登录项设置")) { AgentLink.openLoginItems() } }

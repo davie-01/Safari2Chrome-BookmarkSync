@@ -23,8 +23,15 @@ struct PermissionsPage: View {
                     Text(t("macOS 把 Safari 的书签文件列为受保护数据。把 BookmarkSync.app 加进这一项并勾选，然后点下面的「重启后台服务」。"))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button(t("重启后台服务")) { link.restartAgent() }
-                        .disabled(link.switchingAgent)
+                    HStack(spacing: 8) {
+                        Button(t("重启后台服务")) { link.restartAgent() }
+                            .disabled(link.switchingAgent)
+                        if let n = link.restartNote {
+                            if !n.warning { ProgressView().controlSize(.small) }
+                            Text(n.text).font(.caption).foregroundStyle(n.warning ? Color.orange : Color.secondary)
+                            if n.warning { Button(t("重试")) { link.retryResidentSwitch() } }
+                        }
+                    }
                 }
             }
             Card {
@@ -34,9 +41,9 @@ struct PermissionsPage: View {
                         ok: link.resident && !link.residentNeedsApproval && link.residentNote == nil,
                         detail: link.residentNote?.text ?? (link.resident ? t("已注册，登录时自动启动") : t("未注册：只有 BookmarkSync 打开时才同步")),
                         warning: link.residentNote?.warning ?? false,
-                        busy: link.switchingAgent,
+                        busy: link.switchingAgent && link.operation == .switchResident,
                         action: (t("打开登录项设置"), { AgentLink.openLoginItems() }))
-                    if case .failed(_, let needsApproval) = link.residentSwitch, !needsApproval {
+                    if link.operation == .switchResident, case .failed(_, let needsApproval) = link.residentSwitch, !needsApproval {
                         Button(t("重试")) { link.retryResidentSwitch() }
                     }
                     if link.resident && !link.connected && !link.switchingAgent {

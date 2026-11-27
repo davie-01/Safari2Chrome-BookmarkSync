@@ -208,10 +208,11 @@ public enum Installer {
         return "已关闭常驻（\(describe(embeddedService.status))）"
     }
 
-    /// Restarts the resident service so it picks up changed settings.
-    public static func kickstartResident() {
+    /// Restarts the resident service (`kill`), or only starts it when it is not running: a
+    /// repair must not kill an instance launchd is starting at that very moment.
+    public static func kickstartResident(kill: Bool = true) {
         let label = FileManager.default.fileExists(atPath: Paths.launchAgentPlist.path) ? AppInfo.agentLabel : AppInfo.embeddedAgentLabel
-        _ = launchctl(["kickstart", "-k", "gui/\(getuid())/\(label)"])
+        _ = launchctl(kill ? ["kickstart", "-k", "gui/\(getuid())/\(label)"] : ["kickstart", "gui/\(getuid())/\(label)"])
     }
 
     public static var agentStatus: String {

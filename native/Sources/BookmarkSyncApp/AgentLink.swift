@@ -34,11 +34,16 @@ final class AgentLink: ObservableObject {
     @Published private(set) var residentSwitch = ResidentSwitch.idle
     /// What the user asked for, shown by the toggle until the switch is over.
     @Published private(set) var residentTarget: Bool?
-    private var lastResidentTarget = true
     private var switchStartedAt = Date.distantFuture
     /// Set once the service has been switched: the next connection completes the switch.
     private var awaitingAgent = false
     var switchingAgent: Bool { if case .working = residentSwitch { return true } else { return false } }
+    /// Which operation residentSwitch is about: the one running, or the one that failed.
+    enum AgentOperation { case switchResident, restart }
+    @Published private(set) var operation: AgentOperation?
+    private var retryOperation: (() -> Void)?
+    /// A restart is done once an agent other than this one answers.
+    private var restartFromPid: Int?
     @Published var tab: AppTab = .sync
     /// False while the window is closed (the app lives on in the menu bar): the
     /// embedded web UI is then torn down instead of living on in the background.
@@ -146,8 +151,8 @@ final class AgentLink: ObservableObject {
         connectedAt = Date()
         lastError = nil
         connectionProblem = nil
-        if awaitingAgent && connectedAt > switchStartedAt { finishSwitch() }
-        else if case .failed = residentSwitch { residentSwitch = .idle } // it works after all
+        if awaitingAgent { if operationDone() { finishSwitch() } }
+        else if case .failed = residentSwitch { residentSwitch = .idle; operation = nil } // it works after all
         emit(["event": "agent.connected"])
         Thread.detachNewThread { [weak self] in
             let reader = LineReader(fd: c)
@@ -285,6 +290,7 @@ final class AgentLink: ObservableObject {
                 case .success(let v):
                     self.status = self.decode(v)
                     self.lastError = nil
+                    if self.awaitingAgent && self.operationDone() { self.finishSwitch() }
                 case .failure(let e):
                     self.lastError = e.message
                 }
@@ -484,8 +490,10 @@ final class AgentLink: ObservableObject {
     /// connected; failed with the reason and what to do about it otherwise.
     func setResident(_ on: Bool) {
         guard !switchingAgent else { return }
+        operation = .switchResident
+        retryOperation = { [weak self] in self?.setResident(on) }
+        restartFromPid = nil
         residentTarget = on
-        lastResidentTarget = on
         switchStartedAt = Date()
         awaitingAgent = false
         AgentSupervisor.shared.forgetOutage()
@@ -511,7 +519,7 @@ final class AgentLink: ObservableObject {
         }
     }
 
-    func retryResidentSwitch() { setResident(lastResidentTarget) }
+    func retryResidentSwitch() { retryOperation?() }
 
     private func step(_ text: String) {
         if switchingAgent { residentSwitch = .working(text) }
@@ -525,7 +533,12 @@ final class AgentLink: ObservableObject {
         }
         if on && approval { return failSwitch(t("等待批准：在登录项设置里打开 BookmarkSync"), needsApproval: true) }
         if on { step(t("正在等待后台服务启动…")) }
-        if connected && connectedAt > switchStartedAt { return finishSwitch() }
+        awaitNewAgent()
+    }
+
+    /// The new agent connecting (operationDone) completes the operation; 30 s without fails it.
+    private func awaitNewAgent() {
+        if operationDone() { return finishSwitch() }
         awaitingAgent = true
         connect() // attempts while the service was switching did nothing
         let started = switchStartedAt
@@ -536,9 +549,17 @@ final class AgentLink: ObservableObject {
         }
     }
 
+    private func operationDone() -> Bool {
+        guard connected, connectedAt > switchStartedAt else { return false }
+        guard let old = restartFromPid else { return true }
+        return status.map { $0.agentPid != old } ?? false // known once hello answers
+    }
+
     private func finishSwitch() {
         awaitingAgent = false
         residentTarget = nil
+        restartFromPid = nil
+        operation = nil
         residentSwitch = .idle
         refresh()
     }
@@ -546,11 +567,13 @@ final class AgentLink: ObservableObject {
     private func failSwitch(_ why: String, needsApproval: Bool = false) {
         awaitingAgent = false
         residentTarget = nil
+        restartFromPid = nil
         residentSwitch = .failed(why, needsApproval: needsApproval)
     }
 
     /// The resident service's line under its toggle: the step, the failure, or what it does.
     var residentNote: (text: String, warning: Bool)? {
+        if operation == .restart { return residentNeedsApproval ? (t("等待批准：在登录项设置里打开 BookmarkSync"), true) : nil }
         switch residentSwitch {
         case .working(let s): return (s, false)
         case .failed(let s, _): return (s, true)
@@ -558,22 +581,40 @@ final class AgentLink: ObservableObject {
         }
     }
 
+    /// The restart's line next to its button: the step or the failure.
+    var restartNote: (text: String, warning: Bool)? {
+        guard operation == .restart else { return nil }
+        switch residentSwitch {
+        case .working(let s): return (s, false)
+        case .failed(let s, _): return (s, true)
+        case .idle: return nil
+        }
+    }
+
     static func openLoginItems() {
         if let u = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(u) }
     }
 
-    /// Restarts whichever agent is running, so it picks up a changed Safari path.
+    /// Restarts whichever agent is running, so it picks up a changed Safari path. One at a
+    /// time, shown like a switch: each restart kills the agent, and restarts in a row would
+    /// kill the one just starting until launchd throttles the service.
     func restartAgent() {
+        guard !switchingAgent else { return }
+        operation = .restart
+        retryOperation = { [weak self] in self?.restartAgent() }
+        restartFromPid = status?.agentPid ?? -1
+        residentTarget = nil
+        switchStartedAt = Date()
+        awaitingAgent = false
         AgentSupervisor.shared.forgetOutage()
         failures = 0
         lastError = nil
         connectionProblem = nil
-        dropped()
-        connect() // also when there was no connection to drop: this is the way to retry
-        Task.detached(priority: .utility) {
-            // the new agent's socket wakes connect(); launchctl may take a moment
+        residentSwitch = .working(t("正在重启后台服务…"))
+        Task.detached(priority: .userInitiated) { [weak self] in
             if Installer.residentEnabled { Installer.kickstartResident() }
             else { AgentSupervisor.shared.restartTemporary() }
+            await self?.awaitNewAgent()
         }
     }
 }

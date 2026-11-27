@@ -69,7 +69,7 @@ final class AgentSupervisor {
         lock.unlock()
         switch action {
         case .wait: break
-        case .restartResident: Installer.kickstartResident()
+        case .restartResident: Installer.kickstartResident(kill: false)
         case .reregisterResident:
             // an upgrade can leave a stale service record that only registering again clears
             Log.warn("resident agent still down after \(Int(downFor)) s: registering it again")
